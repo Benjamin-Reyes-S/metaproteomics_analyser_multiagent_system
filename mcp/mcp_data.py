@@ -16,3 +16,19 @@ def number_of_studies():
 def number_of_samples():
 		sample_labels: [str]
 	return sample_labels, len[sample_labels]
+
+
+@mcp.tool
+	def read_csv_proteomics_dataset(path_to_dataset:str)-> df:DataFrame:
+		import pandas as pd
+
+	df = pd.read_csv(
+		path_to_dataset,
+		sep="\t"
+	)
+
+	print(df.columns.tolist())
+	print(df.head())
+	print(df.isna().sum().sort_values(ascending=False).head(10))
+	return df as proteomics_dataset
+	
