@@ -1,5 +1,9 @@
-class MetaproteomicsAnalysisState(TypedDict):
-    data_raw_path: str
+from operator import add
+from typing import Annotated, NotRequired, TypedDict
+
+
+class MetaproteomicsAnalysisState(TypedDict, total=False):
+    data_raw_path: Required[str]
 
     # Produced by the planner
     study_plan: NotRequired[str | None]

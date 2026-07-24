@@ -1,0 +1,90 @@
+resource:
+  uri: "metaproteomics://schemas/pxd001655/protein-summary"
+  name: "PXD001655 metaproteomics schema"
+  version: "1.0"
+  dataset:
+    accession: "PXD001655"
+    file: "PROTEIN_SUMMARY_CONTROL_HOMD-EnSEMBL.tabular"
+    format: "tsv"
+    separator: "\t"
+    table_level: "protein"
+    search_software: "ProteinPilot"
+
+  columns:
+    - source: "N"
+      short_name: "rank"
+      type: integer
+      description: "Protein result rank"
+
+    - source: "Unused"
+      aliases: ["Unused (ProtScore)", "Unused ProtScore"]
+      short_name: "score"
+      type: float
+      description: "Protein confidence from peptides not consumed by higher-ranked proteins"
+
+    - source: "Total"
+      aliases: ["Total (ProtScore)", "Total ProtScore"]
+      short_name: "total_score"
+      type: float
+      description: "Total peptide evidence score"
+
+    - source: "%Cov"
+      short_name: "coverage"
+      type: float
+      unit: percent
+      description: "Protein sequence coverage"
+
+    - source: "%Cov(50)"
+      short_name: "coverage_50"
+      type: float
+      unit: percent
+      description: "Coverage from peptides with at least 50% confidence"
+
+    - source: "%Cov(95)"
+      short_name: "coverage_95"
+      type: float
+      unit: percent
+      description: "Coverage from peptides with at least 95% confidence"
+
+    - source: "Accession"
+      aliases: ["Accessions", "Protein Accession"]
+      short_name: "protein_id"
+      type: string
+      description: "Protein or protein-group identifier"
+
+    - source: "Name"
+      aliases: ["Names", "Protein Name"]
+      short_name: "protein_name"
+      type: string
+      description: "Protein annotation"
+
+    - source: "Species"
+      aliases: ["Organism", "Taxon"]
+      short_name: "organism"
+      type: string
+      description: "Reported source organism"
+
+  optional_derived_columns:
+    sample_id: string
+    condition: string
+    replicate: integer
+    peptide_count: integer
+    unique_peptide_count: integer
+    spectral_count: integer
+    abundance: float
+    tax_id: integer
+    lca_tax_id: integer
+    tax_rank: string
+    function: string
+    go_terms: list[string]
+    ec_numbers: list[string]
+    ko_ids: list[string]
+    q_value: float
+    is_decoy: boolean
+
+  agent_rules:
+    - "Match source headers case-insensitively using source and aliases."
+    - "Rename matched columns to short_name before analysis."
+    - "Do not assume optional_derived_columns exist."
+    - "Preserve the original protein_id because proteins may be grouped."
+    - "Report missing required columns instead of inventing values."
