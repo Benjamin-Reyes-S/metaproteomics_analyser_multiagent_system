@@ -1,7 +1,7 @@
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
-
+from graph.state import MetaproteomicsAnalysisState
 
 
 #studyPlan class output structure
@@ -44,7 +44,7 @@ You are a study planner for metaproteomics data analysis.
 Your responsibilities are:
 
 1. Inspect the available information about the dataset.
-2. Identify relevant properties, including:
+2. Identify relevant features in the dataset, for example:
    - Number of samples
    - Number of experimental groups
    - Batch structure
@@ -52,9 +52,8 @@ Your responsibilities are:
    - Missing values
    - Available metadata
    - File formats
-3. Design an appropriate downstream-analysis plan.
-4. Report any missing information or issues that prevent reliable planning.
-
+3.  Report any missing information or issues that prevent reliable planning.
+4.  Design an appropriate downstream-analysis plan.
 Do not claim to have inspected information that was not provided by the user
 or returned by a tool.
 """
@@ -102,3 +101,5 @@ def study_planer_node(state:MetaproteomicsAnalysisState) -> dict:
                 ],
                 }
       
+if __name__== "__main__":
+        main()

@@ -1,4 +1,6 @@
-os 
+fastmcp
 langchain
+langchain-mcp-adapters
 langchain_ollama
 langgraph
+pandas
