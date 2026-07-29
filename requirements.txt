@@ -1,6 +1,7 @@
 fastmcp
 langchain
 langchain-mcp-adapters
-langchain_ollama
+langchain-ollama
 langgraph
 pandas
+pydantic

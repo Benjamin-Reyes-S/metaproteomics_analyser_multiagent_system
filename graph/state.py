@@ -1,9 +1,10 @@
 from operator import add
-from typing import Annotated, NotRequired, TypedDict
+from typing import Annotated, NotRequired, Required, TypedDict
 
 
 class MetaproteomicsAnalysisState(TypedDict, total=False):
-    data_raw_path: Required[str]
+    # Every CSV/TSV that belongs to the study (metadata, abundance, annotations).
+    data_raw_paths: Required[list[str]]
 
     # Produced by the planner
     study_plan: NotRequired[str | None]
