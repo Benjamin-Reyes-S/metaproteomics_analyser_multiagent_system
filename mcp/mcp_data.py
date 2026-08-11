@@ -1,7 +1,9 @@
-"""MCP tools for loading CSV data and Markdown study-planning guidance."""
+"""Bounded MCP tools for deterministic CSV study inspection."""
 
 import csv
+import json
 import re
+from collections import Counter
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -9,377 +11,208 @@ from fastmcp import FastMCP
 
 mcp = FastMCP("metaproteomics-data")
 
-
-@mcp.tool()
-def read_csv_data(file_path: str, delimiter: str = ",") -> dict:
-    """Read a CSV file deterministically without guessing or type conversion.
-
-<<<<<<< HEAD
-    The first row is treated as the header. Every value is returned as text in
-    its original row order; an absent trailing value is returned as ``None``.
-    UTF-8 with an optional byte-order mark is supported.
-=======
-IDENTIFIER_COLUMN_NAMES = {
-    "groupid",
-    "protein",
-    "proteins",
-    "peptide",
-    "peptides",
-    "accession",
-    "name",
-    "species",
+MISSING_VALUES = {"", "-", "na", "n/a", "nan", "none", "null", "unknown", "unclassified"}
+FIELD_ALIASES = {
+    "sample_id": {"sampleid", "sample id", "sample_id", "sample"},
+    "subject_id": {"subject", "subjectid", "subject_id", "patient", "donor"},
+    "condition": {"condition", "group", "experimental arm", "disease state"},
+    "treatment": {"treatment", "intervention", "drug"},
+    "disease": {"disease", "diagnosis"},
+    "phenotype": {"phenotype"}, "cohort": {"cohort"},
+    "study_id": {"study", "studyid", "study_id"},
+    "use_case": {"usecase", "use case", "use_case"},
+    "timepoint": {"timepoint", "time point", "visit"},
+    "replicate": {"replicate"}, "batch": {"batch"},
+    "organism": {"organism", "species"}, "tissue": {"tissue"},
+    "protein_id": {"protein", "protein id", "protein_id", "accession", "members_identifier"},
+    "protein_group_id": {"protein group", "protein_group_id", "groupid", "#pg"},
+    "peptide_id": {"peptide", "peptide id", "peptide_id", "sequence"},
+    "taxonomy_id": {"taxonomy id", "taxonomy_id", "taxid"},
 }
+STUDY_CONCEPTS = {"sample_id", "subject_id", "condition", "treatment", "disease", "phenotype", "cohort", "study_id", "use_case", "timepoint", "replicate", "batch", "organism", "tissue"}
 
->>>>>>> b2c482148b5172bc1f1b49e8b133e40a1cbb0ba2
+MAX_FILES = 50
+MAX_PREVIEW_ROWS = 100
+MAX_EXAMPLES = 5
+MAX_IDENTIFIERS = 20
+MAX_RELATIONSHIPS = 100
+MAX_FIELD_MAPPINGS = 250
+MAX_CELL_CHARS = 500
+MAX_RESPONSE_CHARS = 400_000
 
-    Args:
-        file_path: Path to a file whose extension is ``.csv``.
-        delimiter: One-character field delimiter. It defaults to a comma.
 
-    Returns:
-        The resolved path, column names, row count, and rows as dictionaries.
-    """
-    path = Path(file_path).expanduser().resolve()
-    if path.suffix.lower() != ".csv":
-        raise ValueError("file_path must point to a .csv file")
-    if not path.is_file():
-        raise FileNotFoundError(f"CSV file not found: {path}")
-    if len(delimiter) != 1:
-        raise ValueError("delimiter must be exactly one character")
+def _normalized(value: str) -> str:
+    return re.sub(r"[^a-z0-9#]+", " ", str(value).casefold()).strip()
 
+
+def _canonical_field(label: str) -> tuple[str | None, float, str]:
+    normalized = _normalized(label)
+    for canonical, aliases in FIELD_ALIASES.items():
+        if normalized in aliases:
+            return canonical, 0.98, "The label matches a known semantic concept."
+    if any(term in normalized for term in ("function", "description", "role", "subrole", "ortholog", "cazy")):
+        return "functional_annotation", 0.92, "The field describes biological function."
+    if any(term in normalized for term in ("superkingdom", "phylum", "class", "order", "family", "genus", "species")):
+        return "organism_annotation", 0.96, "The field is a taxonomic rank annotation."
+    if normalized in {"level", "members count", "members_count"}:
+        return "group_membership", 0.92, "The field describes protein-group membership."
+    return None, 0.0, "Semantic meaning could not be determined confidently."
+
+
+def _detect_delimiter(path: Path) -> str:
+    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+        sample = handle.read(65536)
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except csv.Error:
+        first = sample.splitlines()[0] if sample else ""
+        counts = {item: first.count(item) for item in ",;\t|"}
+        delimiter = max(counts, key=counts.get)
+        if not counts[delimiter]:
+            raise ValueError(f"Could not detect delimiter for {path}")
+        return delimiter
+
+
+def _bounded_text(value) -> str:
+    text = "" if value is None else str(value)
+    return text[:MAX_CELL_CHARS]
+
+
+def _unique_examples(values, limit: int = MAX_EXAMPLES) -> list[str]:
+    result = []
+    for value in values:
+        value = _bounded_text(value)
+        if value.casefold() in MISSING_VALUES or value in result:
+            continue
+        result.append(value)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _read_preview(path: Path, delimiter: str, limit: int = MAX_PREVIEW_ROWS) -> tuple[list[str], list[dict], int]:
+    rows, row_count = [], 0
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle, delimiter=delimiter, strict=True)
         try:
             columns = next(reader)
         except StopIteration as exc:
-            raise ValueError("CSV file is empty") from exc
-
-        if not columns or any(column == "" for column in columns):
-            raise ValueError("CSV header names must not be empty")
+            raise ValueError(f"CSV file is empty: {path}") from exc
         if len(columns) != len(set(columns)):
-            raise ValueError("CSV header names must be unique")
-
-<<<<<<< HEAD
-        rows = []
-        for row_number, values in enumerate(reader, start=2):
-            if len(values) > len(columns):
-                raise ValueError(
-                    f"CSV row {row_number} has {len(values)} fields; "
-                    f"expected at most {len(columns)}"
-                )
-            padded_values = values + [None] * (len(columns) - len(values))
-            rows.append(dict(zip(columns, padded_values)))
-=======
-    try:
-        return csv.Sniffer().sniff(sample, delimiters="\t,;").delimiter
-    except csv.Error:
-        first_line = sample.splitlines()[0]
-        counts = {separator: first_line.count(separator) for separator in ("\t", ",", ";")}
-        separator = max(counts, key=counts.get)
-        if counts[separator] == 0:
-            raise ValueError("Could not detect a tab, comma, or semicolon delimiter")
-        return separator
+            raise ValueError(f"CSV header names must be unique: {path}")
+        for number, values in enumerate(reader, 2):
+            if len(values) != len(columns):
+                raise ValueError(f"CSV row {number} has {len(values)} fields; expected {len(columns)}")
+            row_count += 1
+            if len(rows) < limit:
+                rows.append(dict(zip(columns, map(_bounded_text, values))))
+    return columns, rows, row_count
 
 
-def _read_dataset(path_to_dataset: str) -> tuple[Path, str, pd.DataFrame]:
-    path = _resolve_dataset(path_to_dataset)
-    separator = _detect_separator(path)
-    dataframe = pd.read_csv(path, sep=separator, encoding="utf-8-sig", low_memory=False)
-    dataframe.columns = [str(column).strip() for column in dataframe.columns]
-    return path, separator, dataframe
+def interpret_csv_metadata(csv_data: dict) -> dict:
+    """Convert deterministic CSV output or a bounded preview to canonical JSON."""
+    columns = list(csv_data["columns"])
+    rows = list(csv_data["rows"])
+    first_values = [str(row.get(columns[0], "")) for row in rows]
+    first_concepts = [_canonical_field(value)[0] for value in first_values]
+    transposed = len(columns) > 2 and bool(rows) and sum(c in STUDY_CONCEPTS for c in first_concepts) / len(rows) >= 0.4
+    if transposed:
+        fields = [(str(row.get(columns[0], "")), [str(row.get(column, "")) for column in columns[1:]]) for row in rows]
+        all_entities = columns[1:]
+        entities = all_entities[:MAX_IDENTIFIERS]
+        orientation, entity_axis, attribute_axis = "entities_as_columns", "columns", "rows"
+    else:
+        fields = [(column, [str(row.get(column, "")) for row in rows]) for column in columns]
+        all_entities = []
+        entities, orientation, entity_axis, attribute_axis = [], "records_as_rows", "rows", "columns"
 
-
-def _schema_matches(columns: list[str]) -> tuple[dict[str, str], list[str]]:
-    available = {column.casefold(): column for column in columns}
-    matches: dict[str, str] = {}
-    missing: list[str] = []
-
-    for source, definition in SCHEMA_COLUMNS.items():
-        accepted_names = [source, *definition["aliases"]]
-        matched = next(
-            (available[name.casefold()] for name in accepted_names if name.casefold() in available),
-            None,
-        )
-        if matched is None:
-            missing.append(source)
+    mappings, unmapped, concept_values = [], [], {}
+    mappings_truncated = len(fields) > MAX_FIELD_MAPPINGS
+    for source, values in fields[:MAX_FIELD_MAPPINGS]:
+        canonical, confidence, reason = _canonical_field(source)
+        item = {"source_field": source, "canonical_field": canonical, "semantic_type": "categorical", "values_example": _unique_examples(values), "confidence": confidence, "status": "mapped" if canonical else "unknown", "reason": reason}
+        mappings.append(item)
+        if canonical:
+            concept_values.setdefault(canonical, []).extend(values)
         else:
-            matches[matched] = definition["short_name"]
-    return matches, missing
+            unmapped.append({"source_field": source, "values_example": item["values_example"], "reason": reason})
+
+    mapped = set(concept_values)
+    has_study = bool(mapped & STUDY_CONCEPTS)
+    has_groups = "protein_group_id" in mapped or "group_membership" in mapped
+    has_bio = bool(mapped & {"protein_id", "peptide_id", "taxonomy_id", "organism_annotation", "functional_annotation"})
+    if has_study and (has_groups or has_bio): role = "mixed_metadata"
+    elif has_study: role = "sample_metadata" if transposed or "sample_id" in mapped else "study_metadata"
+    elif has_groups: role = "protein_group_annotation"
+    elif "peptide_id" in mapped: role = "peptide_annotation"
+    elif "organism_annotation" in mapped and "functional_annotation" not in mapped: role = "taxonomy_annotation"
+    elif "functional_annotation" in mapped and "organism_annotation" not in mapped: role = "functional_annotation"
+    elif has_bio: role = "mixed_metadata"
+    else: role = "unknown"
+    entity_type = "sample" if role == "sample_metadata" else "protein_or_protein_group" if role == "protein_group_annotation" else "mixed" if role == "mixed_metadata" else "unknown"
+    identifier = next((m for m in mappings if m["canonical_field"] in {"sample_id", "protein_group_id", "protein_id", "peptide_id"}), None)
+    if not entities and identifier:
+        entities = _unique_examples((row.get(identifier["source_field"]) for row in rows), MAX_IDENTIFIERS)
+
+    design = {key: [] for key in ("sample_ids", "subject_ids", "conditions", "controls", "treatments", "diseases", "phenotypes", "cohorts", "timepoints", "batches", "replicates", "studies", "use_cases", "factors", "potential_confounders")}
+    bucket = {"subject_id": "subject_ids", "condition": "conditions", "treatment": "treatments", "disease": "diseases", "phenotype": "phenotypes", "cohort": "cohorts", "timepoint": "timepoints", "batch": "batches", "replicate": "replicates", "study_id": "studies", "use_case": "use_cases"}
+    if transposed: design["sample_ids"] = entities
+    for concept, target in bucket.items():
+        design[target] = _unique_examples(concept_values.get(concept, []), MAX_EXAMPLES)
+    design["factors"] = [m["source_field"] for m in mappings if m["canonical_field"] in {"condition", "treatment", "disease", "phenotype", "cohort", "timepoint"}]
+    design["potential_confounders"] = [m["source_field"] for m in mappings if m["canonical_field"] in {"batch", "study_id"}]
+    biological = {"protein_ids": _unique_examples(concept_values.get("protein_id", [])), "protein_group_ids": _unique_examples(concept_values.get("protein_group_id", [])), "peptide_ids": _unique_examples(concept_values.get("peptide_id", [])), "taxonomy_ids": _unique_examples(concept_values.get("taxonomy_id", [])), "organisms": _unique_examples(concept_values.get("organism", []) + concept_values.get("organism_annotation", [])), "functional_annotations": _unique_examples(concept_values.get("functional_annotation", []))}
+    relationships = []
+    if transposed:
+        for source, values in fields[:MAX_RELATIONSHIPS]:
+            relationships.append({
+                "attribute": source,
+                "entity_count": len(all_entities),
+                "value_examples": _unique_examples(values),
+                "missing_count_in_preview": sum(
+                    _bounded_text(value).casefold() in MISSING_VALUES
+                    for value in values
+                ),
+            })
+    warnings = []
+    row_count = int(csv_data.get("row_count", len(rows)))
+    if len(rows) < row_count: warnings.append(f"Semantic interpretation used a {len(rows)}-row preview of {row_count} rows.")
+    if len(fields) > MAX_RELATIONSHIPS and transposed: warnings.append(f"Relationship summaries were limited to {MAX_RELATIONSHIPS} attributes.")
+    if mappings_truncated: warnings.append(f"Field mappings were limited to {MAX_FIELD_MAPPINGS} fields.")
+    confidence = min(0.99, 0.55 + 0.08 * len(mapped)) if role != "unknown" else 0.2
+    usable = role in {"sample_metadata", "study_metadata", "mixed_metadata"} and has_study
+    return {"schema_version": "1.0", "source": {"file_path": csv_data.get("file_path", ""), "row_count": row_count, "column_count": len(columns)}, "table_interpretation": {"table_role": role, "orientation": orientation, "entity_type": entity_type, "entity_axis": entity_axis, "attribute_axis": attribute_axis, "confidence": round(confidence, 2), "reasoning_summary": "The first column contains metadata attributes and remaining headers identify samples." if transposed else "Columns describe attributes and each row is an entity record."}, "entities": {"primary_entity": entity_type, "identifier_count": len(all_entities) if transposed else None, "identifier_examples": entities, "identifiers_truncated": transposed and len(all_entities) > len(entities), "identifier_source": "column_headers" if transposed else (identifier["source_field"] if identifier else "unknown")}, "field_mappings": mappings, "study_design": design, "biological_annotations": biological, "unmapped_fields": unmapped, "relationships": relationships, "quality_checks": {"duplicate_entity_ids": [value for value, count in Counter(entities).items() if value and count > 1], "missing_entity_ids": [], "inconsistent_fields": [], "possible_missing_values": [], "warnings": warnings}, "uncertainties": [] if not unmapped else [{"issue": f"{len(unmapped)} field(s) could not be mapped confidently.", "possible_interpretations": [], "confidence": 0.0, "additional_information_needed": "A data dictionary for the unmapped fields."}], "summary": {"usable_for_study_design": usable, "study_design_confidence": round(confidence, 2) if usable else 0.0, "description": f"Classified as {role} with {orientation} orientation."}}
 
 
-def _find_column(
-    dataframe: pd.DataFrame,
-    kind: str,
-    column_name: str | None,
-) -> str | None:
-    available = {column.casefold(): column for column in dataframe.columns}
-    if column_name is not None:
-        matched = available.get(column_name.strip().casefold())
-        if matched is None:
-            raise ValueError(
-                f"Column {column_name!r} was not found. Available columns: "
-                f"{list(dataframe.columns)}"
-            )
-        return matched
-    return next(
-        (available[name] for name in LABEL_COLUMN_CANDIDATES[kind] if name in available),
-        None,
-    )
-
-
-def _label_summary(
-    path_to_dataset: str,
-    kind: str,
-    column_name: str | None,
-) -> dict[str, Any]:
-    _, _, dataframe = _read_dataset(path_to_dataset)
-    column = _find_column(dataframe, kind, column_name)
-    if column is None:
-        return {
-            "column": None,
-            "count": None,
-            "labels": [],
-            "available": False,
-            "reason": f"No {kind} label column was found in the dataset.",
-        }
-
-    labels = dataframe[column].dropna().astype(str).drop_duplicates().tolist()
-    return {
-        "column": column,
-        "count": len(labels),
-        "labels": labels,
-        "available": True,
-        "missing_values": int(dataframe[column].isna().sum()),
-    }
-
-
-def inspect_csv_proteomics_dataset(path_to_dataset: str) -> dict[str, Any]:
-    """Inspect a CSV/TSV proteomics table without returning the full dataset.
-
-    This undecorated function can be called directly by graph nodes.  The MCP
-    tool below delegates to it when the data server is used independently.
-    """
-    path, separator, dataframe = _read_dataset(path_to_dataset)
-    columns = list(dataframe.columns)
-    schema_matches, missing_schema_columns = _schema_matches(columns)
-    recognized = set(schema_matches)
->>>>>>> b2c482148b5172bc1f1b49e8b133e40a1cbb0ba2
-
-    return {
-        "file_path": str(path),
-        "columns": columns,
-        "row_count": len(rows),
-        "rows": rows,
-    }
-
-
-<<<<<<< HEAD
 @mcp.tool()
-def read_markdown_skill(file_path: str) -> dict:
-    """Read an agent skill or study-planning context from a Markdown file.
-=======
-def _count_rows(path: Path) -> int:
-    """Count physical data rows without loading a potentially huge table."""
-    with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
-        return max(sum(1 for _ in handle) - 1, 0)
+def inspect_csv_study(file_paths: list[str]) -> dict:
+    """Return a bounded semantic study manifest for one or more CSV files.
 
-
-def _compact_file_inspection(path_to_dataset: str) -> tuple[dict[str, Any], set[str]]:
-    """Create a bounded summary suitable for an LLM context window."""
-    path = _resolve_dataset(path_to_dataset)
-    separator = _detect_separator(path)
-    preview = pd.read_csv(
-        path,
-        sep=separator,
-        encoding="utf-8-sig",
-        low_memory=False,
-        nrows=200,
-    )
-    preview.columns = [str(column).strip() for column in preview.columns]
-    columns = list(preview.columns)
-    folded = {column.casefold() for column in columns}
-    schema_matches, _ = _schema_matches(columns)
-    label_names = {
-        candidate
-        for candidates in LABEL_COLUMN_CANDIDATES.values()
-        for candidate in candidates
-    }
-    label_columns = [column for column in columns if column.casefold() in label_names]
-    numeric_columns = preview.select_dtypes(include="number").columns.tolist()
-
-    table_type = "unclassified_table"
-    sample_columns: list[str] = []
-    metadata_fields: list[str] = []
-    if len(schema_matches) >= 4:
-        table_type = "protein_identification_summary"
-    elif columns and columns[0].casefold() in {"sampleid", "sample_id"} and len(columns) > len(preview):
-        table_type = "transposed_sample_metadata"
-        sample_columns = columns[1:]
-        metadata_fields = preview.iloc[:, 0].dropna().astype(str).tolist()
-    elif label_columns:
-        table_type = "sample_metadata"
-        sample_column = next(
-            (
-                column
-                for column in label_columns
-                if column.casefold() in LABEL_COLUMN_CANDIDATES["sample"]
-            ),
-            None,
-        )
-        if sample_column:
-            sample_columns = (
-                preview[sample_column].dropna().astype(str).drop_duplicates().tolist()
-            )
-        metadata_fields = columns
-    elif "groupid" in folded and len(columns) > 20:
-        table_type = "protein_group_abundance_matrix"
-        sample_columns = [
-            column
-            for column in columns
-            if column.casefold() not in IDENTIFIER_COLUMN_NAMES
-        ]
-    elif "level" in folded and ("#pg" in folded or "members_identifier" in folded):
-        table_type = "protein_group_functional_annotation"
-    elif len(numeric_columns) > 2:
-        if folded & IDENTIFIER_COLUMN_NAMES:
-            table_type = "feature_abundance_matrix"
-    missing = preview.isna().sum()
-    summary = {
-        "file_name": path.name,
-        "path": str(path),
-        "inferred_table_type": table_type,
-        "format": "tsv" if separator == "\t" else "csv",
-        "row_count": _count_rows(path),
-        "column_count": len(columns),
-        "columns_head": columns[:30],
-        "columns_tail": columns[-10:] if len(columns) > 30 else [],
-        "numeric_column_count_in_preview": len(numeric_columns),
-        "preview_rows_inspected": len(preview),
-        "columns_with_missing_values_in_preview": {
-            column: int(count)
-            for column, count in missing.items()
-            if int(count) > 0
-        },
-        "sample_count_inferred_from_columns": len(sample_columns) or None,
-        "sample_ids_head": sample_columns[:20],
-        "metadata_fields": metadata_fields[:30],
-        "schema_column_mapping": schema_matches,
-    }
-    return summary, set(sample_columns)
-
-
-def inspect_csv_study(path_to_datasets: list[str]) -> dict[str, Any]:
-    """Inspect all study CSV/TSV files and describe their likely relationships."""
-    if not path_to_datasets:
-        raise ValueError("No CSV/TSV datasets were supplied")
-
-    files: list[dict[str, Any]] = []
-    samples_by_file: dict[str, set[str]] = {}
-    for dataset_path in path_to_datasets:
-        summary, sample_ids = _compact_file_inspection(dataset_path)
-        files.append(summary)
-        if sample_ids:
-            samples_by_file[summary["file_name"]] = sample_ids
-
-    overlaps = []
-    names = list(samples_by_file)
-    for index, left in enumerate(names):
-        for right in names[index + 1 :]:
-            left_ids = samples_by_file[left]
-            right_ids = samples_by_file[right]
-            overlap = left_ids & right_ids
-            overlaps.append(
-                {
-                    "left_file": left,
-                    "right_file": right,
-                    "matching_sample_ids": len(overlap),
-                    "left_only": len(left_ids - right_ids),
-                    "right_only": len(right_ids - left_ids),
-                    "matching_ids_head": sorted(overlap)[:20],
-                }
-            )
-
-    return {
-        "file_count": len(files),
-        "files": files,
-        "sample_identifier_overlaps": overlaps,
-        "inspection_note": (
-            "All files and headers were inspected. Missing-value and dtype summaries "
-            "use at most the first 200 rows to keep the planner prompt bounded."
-        ),
-    }
-
-
-@mcp.tool
-def read_csv_proteomics_dataset(path_to_dataset: str) -> dict[str, Any]:
-    """Inspect a CSV/TSV proteomics table without returning the full dataset."""
-    return inspect_csv_proteomics_dataset(path_to_dataset)
-
-
-@mcp.tool
-def available_batch_labels(
-    path_to_dataset: str,
-    column_name: str | None = None,
-) -> dict[str, Any]:
-    """List batch labels, optionally using an explicitly named batch column."""
-    return _label_summary(path_to_dataset, "batch", column_name)
->>>>>>> b2c482148b5172bc1f1b49e8b133e40a1cbb0ba2
-
-    Markdown headings are also exposed as ordered sections. This lets an agent
-    use the full document as its prompt context while addressing individual
-    sections by heading.
-
-    Args:
-        file_path: Path to a Markdown file with a ``.md`` extension.
-
-    Returns:
-        The resolved path, complete Markdown text, and ordered sections. Each
-        section contains its heading level, title, and body.
+    The result contains schemas, inferred roles, study factors, identifier
+    examples, relationship summaries, warnings, and uncertainties. Raw rows
+    and complete measurement tables are never returned.
     """
-    path = Path(file_path).expanduser().resolve()
-    if path.suffix.lower() != ".md":
-        raise ValueError("file_path must point to a .md file")
-    if not path.is_file():
-        raise FileNotFoundError(f"Markdown file not found: {path}")
+    if not file_paths:
+        raise ValueError("At least one CSV file is required")
+    if len(file_paths) > MAX_FILES:
+        raise ValueError(f"At most {MAX_FILES} files may be inspected per call")
 
-    content = path.read_text(encoding="utf-8-sig")
-    heading_pattern = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-    sections = []
-    current = {"level": 0, "title": "Preamble", "lines": []}
-
-    for line in content.splitlines():
-        match = heading_pattern.match(line)
-        if match:
-            if current["lines"] or current["title"] != "Preamble":
-                sections.append(
-                    {
-                        "level": current["level"],
-                        "title": current["title"],
-                        "content": "\n".join(current["lines"]).strip(),
-                    }
-                )
-            current = {
-                "level": len(match.group(1)),
-                "title": match.group(2).strip(),
-                "lines": [],
-            }
-        else:
-            current["lines"].append(line)
-
-    if current["lines"] or current["title"] != "Preamble":
-        sections.append(
-            {
-                "level": current["level"],
-                "title": current["title"],
-                "content": "\n".join(current["lines"]).strip(),
-            }
+    files = []
+    for file_path in file_paths:
+        path = Path(file_path).expanduser().resolve()
+        delimiter = _detect_delimiter(path)
+        columns, rows, row_count = _read_preview(path, delimiter)
+        result = interpret_csv_metadata({"file_path": str(path), "columns": columns, "row_count": row_count, "rows": rows})
+        result["source"]["delimiter"] = {"\t": "tab", ";": "semicolon", ",": "comma", "|": "pipe"}[delimiter]
+        files.append(result)
+    manifest = {"schema_version": "1.0", "files": files}
+    serialized = json.dumps(manifest, ensure_ascii=False)
+    if len(serialized) > MAX_RESPONSE_CHARS:
+        raise ValueError(
+            f"Study manifest is too large: {len(serialized):,} characters; "
+            f"maximum is {MAX_RESPONSE_CHARS:,}. Inspect fewer files per call."
         )
-
-    return {
-        "file_path": str(path),
-        "content": content,
-        "sections": sections,
-    }
+    return manifest
 
 
 if __name__ == "__main__":

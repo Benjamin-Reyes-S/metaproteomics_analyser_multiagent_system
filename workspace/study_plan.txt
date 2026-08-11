@@ -1,0 +1,13 @@
+METAPROTEOMICS STUDY PLAN
+
+Integrated Metaproteomics Study Plan
+
+ISSUES AND MISSING INFORMATION
+
+- File 1 (`SupplementaryFile1.csv`) uses a transposed orientation (entities_as_columns). All sample metadata must be pivoted/reshaped to a standard row-based format before joining.
+- File 3 (`all_groups_abundance.csv`) contains ~249 unmapped sample columns. These must be matched to the 606 sample IDs in File 1. Overlap is not guaranteed and requires explicit mapping.
+- File 2 (`SupplementaryFile3_1.csv`) has 6 unmapped fields (`min_seqlen`, `max_seqlen`, `min_rel_pairw_ident`, `max_rel_pairw_ident`, `members_identifier`, and an empty column). A data dictionary is required to interpret these protein-group characteristics.
+- File 3 has 249 unmapped fields (sample columns). A data dictionary or sample manifest is required to confirm their semantic meaning and link them to File 1.
+- Abundance scale, units, and normalization method for File 3 are unknown. Values appear to be relative proportions or normalized counts, but this must be verified before transformation.
+- No subject IDs, timepoints, batches, or replicates are provided. These cannot be inferred from the current metadata and will limit mixed-effects or longitudinal modeling.
+- Protein/taxonomy/function annotations are biological attributes, not sample metadata. They must be kept separate from sample-level covariates during analysis.
