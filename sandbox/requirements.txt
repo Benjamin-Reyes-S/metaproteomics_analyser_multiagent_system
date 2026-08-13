@@ -1,0 +1,5 @@
+python 3.0
+pandas
+numpy
+scipy
+matplotlib
