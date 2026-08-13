@@ -1,0 +1,8 @@
+services:
+
+  multiagent-system:
+  #internet access for LLM to communicate, 
+
+
+  analysis-sandbox:
+#no internet access, just code run from the requirements

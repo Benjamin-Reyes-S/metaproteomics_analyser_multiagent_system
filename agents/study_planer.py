@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from graph.state import MetaproteomicsAnalysisState
-from mcp_data import inspect_csv_study
+from mcp.mcp_data import inspect_csv_study
 
 
 class StudyPlanOutput(BaseModel):

@@ -5,19 +5,24 @@ from typing import Annotated, NotRequired, Required, TypedDict
 class MetaproteomicsAnalysisState(TypedDict, total=False):
     # Every CSV/TSV that belongs to the study (metadata, abundance, annotations).
     data_raw_paths: Required[list[str]]
+    dataset_summary: NotRequired[dict[str, str] | None]
 
     # Produced by the planner
-    study_plan: NotRequired[str | None]
+    study_plan: Required[str]
 
     # Produced by the auditor
-    evaluation_study_plan: NotRequired[bool | None]
+    code_text: NotRequired[str | None]
+    code_path: NotRequired[str | None]
 
     # Produced by the analysis node
-    downstream_analysis: NotRequired[bool | None]
+    execution_status: NotRequired[str | None]
 
     # Produced during analysis
-    data_outcomes: NotRequired[list[str] | None]
-    plot_paths: NotRequired[list[str] | None]
+    output_files:list[str] | None
+
+    evaluation: str
+    evaluator_feedback:Required[str | None]
 
     # Multiple nodes may contribute issues, so append instead of overwrite
     issues: Annotated[list[str], add]
+    retry_count: int
