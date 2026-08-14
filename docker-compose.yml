@@ -1,8 +1,22 @@
 services:
 
+  # Runs the LangGraph pipeline (`python main.py`); needs internet access
+  # once the agents in agents/ call a real LLM endpoint. Not containerized
+  # yet -- run it on the host for now. Kept inert (no default profile) so
+  # `docker compose up` does not try to build/start it.
   multiagent-system:
-  #internet access for LLM to communicate, 
+    image: metaproteomics-multiagent:not-yet-implemented
+    profiles: ["not-yet-implemented"]
 
-
+  # Executes only the LLM-generated analysis script (workspace/code.py).
+  # No internet access; dependencies are limited to sandbox/requirements.txt
+  # (pandas/numpy/scipy/matplotlib) -- no LangGraph or agent packages.
+  # Image tag matches IMAGE_NAME in sandbox/run_code.py.
   analysis-sandbox:
-#no internet access, just code run from the requirements
+    build:
+      context: ./sandbox # ./path : paths relative to docker-compose.yml  
+    image: metaproteomics-sandbox:latest 
+    network_mode: none
+    volumes:
+      - ./input:/input:ro #only read permissions 
+      - ./workspace:/workspace #place for agent output (code.py, data files, plots, etc.)

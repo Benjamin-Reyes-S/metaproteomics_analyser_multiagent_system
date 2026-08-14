@@ -6,3 +6,4 @@ langchain-openai
 langgraph
 pandas
 pydantic
+langchain_core

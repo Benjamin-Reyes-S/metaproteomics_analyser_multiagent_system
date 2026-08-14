@@ -14,8 +14,11 @@ class MetaproteomicsAnalysisState(TypedDict, total=False):
     code_text: NotRequired[str | None]
     code_path: NotRequired[str | None]
 
-    # Produced by the analysis node
+    # Produced by run_code (the sandbox execution boundary)
     execution_status: NotRequired[str | None]
+    execution_stdout: NotRequired[str | None]
+    execution_stderr: NotRequired[str | None]
+    execution_exit_code: NotRequired[int | None]
 
     # Produced during analysis
     output_files:list[str] | None
