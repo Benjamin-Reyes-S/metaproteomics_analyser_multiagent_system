@@ -1,15 +1,13 @@
+
+
+
+
+
 # Pipeline backbone
 
-This describes the current LangGraph backbone: how data moves through
-`MetaproteomicsAnalysisState`, which files land in `workspace/` and
-`results/`, and which nodes are real vs. placeholder.
-
-Every agent node in `agents/` (`study_planer`,
-`statistical_analyser`, `outcome_auditor`) is currently a **deterministic
-placeholder with no LLM call**. Only the wiring, state contract, file
-artifacts, and sandbox execution are implemented for real. Each stub's
-docstring says exactly what to replace and what contract to preserve.
-`agents/inspect_data` already calls LLM.
+LangGraph pipeline wiring agents (LLM calls) and deterministic nodes
+together. Run via [main.py](main.py); full node/state code lives in
+[graph/graph.py](graph/graph.py) and [graph/state.py](graph/state.py).
 
 ## Graph
 
@@ -17,111 +15,75 @@ docstring says exactly what to replace and what contract to preserve.
 input/*.csv
      |
      v
-inspect_data            (agents/inspect_data.py — agent)
+inspect_data          (agents/inspect_data.py — agent, LLM call)
      |
-     | dataset_summary
+     | dataset_summary: DatasetSummary
      v
-study_planer             (agents/study_planer.py — placeholder)
+study_planer          (agents/study_planer.py — agent, LLM call)
      |
-     | study_plan
+     | study_plan: StudyPlan
      v
-write_plan               (graph/graph.py — real, writes workspace/plan.txt)
+write_plan            (graph/graph.py — deterministic, writes workspace/plan.txt)
      |
      v
-statistical_analyser      (agents/statistical_analyser.py — placeholder)
+statistical_analyser  (agents/statistical_analyser.py — placeholder, no LLM call yet)
      |
-     | code_text
+     | code_text: str
      v
-run_code                 (graph/graph.py + sandbox/run_code.py — real)
-     |                    writes workspace/code.py, runs it in Docker
+run_code              (graph/graph.py + sandbox/run_code.py — deterministic, Docker sandbox)
+     |
      | stdout / stderr / exit_code / output_files
      v
-outcome_auditor           (agents/outcome_auditor.py — placeholder)
+outcome_auditor       (agents/outcome_auditor.py — placeholder, no LLM call yet)
      |
-     +-- PASS --> store_results (graph/graph.py — real) --> END
+     +-- PASS --> store_results (deterministic) --> END
      |
-     +-- FAIL --> statistical_analyser (up to MAX_RETRIES=3, then END)
+     +-- FAIL --> statistical_analyser (retry, up to MAX_RETRIES=3, then END)
 ```
 
-Defined in [graph/graph.py](graph/graph.py); run via [main.py](main.py).
+## Who talks to whom, and how
 
-## State contract (`graph/state.py`)
-
-| Field | Set by | Read by | Notes |
-|---|---|---|---|
-| `data_raw_paths` | caller (`main.py`) | `inspect_data`, `statistical_analyser` | host paths to input CSV/TSV files |
-| `dataset_summary` | `inspect_data` | `study_planer` | `{path: description}` |
-| `study_plan` | `study_planer` | `statistical_analyser` (contract only, unused by placeholder) | written to `workspace/plan.txt` by the `write_plan` node, immediately after `study_planer` and before `store_results` can run |
-| `code_text` | `statistical_analyser` | `run_code` node | in-memory only; never touches disk until `run_code` writes it |
-| `code_path` | `run_code` node | `store_results` | set to `workspace/code.py` |
-| `execution_status` | `run_code` node | — | `"completed"` or `"failed"`, derived from `execution_exit_code` |
-| `execution_stdout` / `execution_stderr` / `execution_exit_code` | `run_code` node | `outcome_auditor` | raw sandbox process output |
-| `output_files` | `run_code` node | `outcome_auditor`, `store_results` | every file left in `workspace/` other than `code.py` |
-| `evaluation` | `outcome_auditor` | routing (`route_after_audit`) | `"PASS"` / `"FAIL"` |
-| `evaluator_feedback` | `outcome_auditor` | `statistical_analyser` (contract only, unused by placeholder) | free text, meant to drive regeneration on retry |
-| `issues` | `inspect_data`, `study_planer` | `write_plan` (written into plan.txt), `main.py` (printed) | accumulates (`Annotated[..., add]`) |
-| `retry_count` | `outcome_auditor` | routing | incremented on each `FAIL`, capped at `MAX_RETRIES` in `graph/graph.py` |
-
-`code_text`/`code_path` are produced by `statistical_analyser`/`run_code`
-
-## Isolation of LLM-generated code
-
-`statistical_analyser` only ever returns `code_text` (a string in
-memory). The **only** place that string is written to disk and executed
-is `run_code_node` in `graph/graph.py`, which writes it verbatim to
-`workspace/code.py` and then calls `sandbox.run_code.run_code()`. That
-function assembles the Docker command itself — no agent or LLM output
-ever contributes to the command line, only to the contents of the file
-that command runs.
-
-## Sandbox execution (`sandbox/run_code.py`)
-
-`run_code(workspace_dir, input_dir)` runs, deterministically:
+Nodes communicate through the in-memory LangGraph state
+(`MetaproteomicsAnalysisState`), not files. Files are written only where a
+human needs to read the result, or where a process outside Python (the
+sandbox container) needs the data.
 
 ```
-docker run --rm --network none \
-    -v <input_dir>:/input:ro \
-    -v <workspace_dir>:/workspace \
-    -w /workspace \
-    metaproteomics-sandbox:latest \
-    python /workspace/code.py
+ agent / node            state it reads              state it writes
+ ───────────────────     ─────────────────────       ─────────────────────
+ inspect_data       -->  data_raw_paths          -->  dataset_summary, issues
+ study_planer       -->  dataset_summary         -->  study_plan, issues
+ write_plan         -->  study_plan, issues      -->  workspace/plan.txt   (file, audit only)
+ statistical_analyser --> data_raw_paths         -->  code_text
+ run_code           -->  code_text               -->  workspace/code.py    (file, sandbox needs it)
+                                                  -->  execution_*, output_files
+ outcome_auditor    -->  execution_*             -->  evaluation, evaluator_feedback
+ store_results      -->  output_files            -->  results/*            (file, on PASS only)
 ```
 
-and returns `{"stdout", "stderr", "exit_code", "output_files"}`.
+`dataset_summary` (`schemas/schema_inspect_data.py: DatasetSummary`) and
+`study_plan` (`schemas/schema_study_planer.py: StudyPlan`) are typed
+Pydantic models, not free text — both agents call their LLM with
+`with_structured_output()` against these schemas so the next node gets
+validated fields (study-design case, batch/replicate/condition structure,
+QC/filtering/normalization/batch/DA/visualization choices) instead of a
+string to re-parse. Schemas live under `schemas/`, separate from the
+agents and from `graph/state.py`, to avoid an import cycle between them.
 
-Build the image once before running the pipeline:
+`code_text` is the isolation boundary for LLM-generated code: it only
+ever exists as a string in state until `run_code` writes it verbatim to
+`workspace/code.py` and executes that file in a network-isolated
+container — no agent output ever reaches a command line.
 
-```bash
-docker build -t metaproteomics-sandbox:latest ./sandbox
-# or: docker compose build analysis-sandbox
-```
+## Agents vs. placeholders
 
-The sandbox image (`sandbox/Dockerfile`) only installs
-`sandbox/requirements.txt` (pandas, numpy, scipy, matplotlib) — no
-LangGraph or agent dependencies. It exists to run generated analysis
-code, not the multi-agent system.
-
-## Files
-
-```
-workspace/                 current run's artifacts (overwritten every run)
-├── plan.txt                written by write_plan_node from state["study_plan"]
-├── code.py                 written by run_code_node from state["code_text"]
-├── results.csv              \
-└── plot_1.png, ...          / whatever the generated code writes
-
-results/                   accepted artifacts, populated only on PASS
-├── plan.txt
-├── code.py
-├── results.csv
-└── plot_1.png, ...
-```
-
-`store_results_node` copies `plan.txt`, `code.py`, and every entry in
-`output_files` from `workspace/` into `results/`. On FAIL after
-`MAX_RETRIES` retries, the graph ends without touching `results/`;
-inspect `workspace/` (`execution_stderr`, `evaluator_feedback` in the
-returned state) to see why.
+| Node | Real? |
+|---|---|
+| `inspect_data` | Yes — LLM call, falls back to a structural-only `DatasetSummary` if `DENBI_TOKEN` is unset or the call fails |
+| `study_planer` | Yes — LLM call, falls back to a minimal `StudyPlan` on the same conditions |
+| `statistical_analyser` | Placeholder — emits a fixed script, ignores `study_plan` |
+| `outcome_auditor` | Placeholder — PASS/FAIL purely from the sandbox exit code |
+| `write_plan`, `run_code`, `store_results` | Deterministic, not agents — implemented for real |
 
 ## Running it
 
@@ -131,28 +93,29 @@ python main.py                      # uses every CSV/TSV in input/
 python main.py --dataset input/SupplementaryFile1.csv
 ```
 
-Requires `langgraph` and `pandas` on the host (see `requirements.txt`)
-and a working `docker` CLI on `PATH`.
+`DENBI_TOKEN` (and optionally `DENBI_MODEL`, `DENBI_API_BASE`) must be set
+for `inspect_data` and `study_planer` to make real LLM calls; otherwise
+both fall back as described above. Requires `langgraph`/`pandas` on the
+host (see `requirements.txt`) and a working `docker` CLI on `PATH`.
 
+Artifacts: `workspace/` holds the current run (`plan.txt`, `code.py`,
+whatever the generated code writes); `store_results_node` copies those
+into `results/` only on a PASS audit.
 
-### notes
-Two corrections to your mental model:
+## Docker Compose
 
-1. statistical_analyser doesn't read plan.txt — and even in the real version, it shouldn't read the file. Right now (line 26 above) it doesn't touch study_plan at all — as a placeholder it only reads state["data_raw_paths"] and ignores the plan entirely. When it is implemented for real, it should read state["study_plan"] — the string still sitting in the in-memory state dict — not re-open workspace/plan.txt from disk.LangGraph already carries it forward in memory as part of the state object flowing node-to-node. The file on disk is a side effect for a human to read (and later for store_results to archive into results/) — it's not the inter-node data channel.
+[docker-compose.yml](docker-compose.yml) defines two services:
 
-2. So the general rule in this backbone: state (in-memory dict) is how nodes talk to each other; files are written by the deterministic nodes only where an artifact needs to persist because a human wants to read it, or because something outside this Python process needs it (the sandbox container can only see /workspace, it can't see the orchestrator's Python variables, so code.py genuinely must be a file). plan.txt doesn't have that second requirement — nothing outside the process reads it during the run — so writing it is purely for persistence/audit, not data transfer.
-
-Corrected version of your summary:
-
-inspect_data returns dataset_summary: dict[str, str] — into state, in-memory.
-study_planner_node reasons over state["dataset_summary"] (in-memory, not a file) → returns 
-
-
-
-
-
-
-: str — into state.
-write_plan_node (deterministic) persists state["study_plan"] to workspace/plan.txt — for humans/results/, not for the next node.
-statistical_analyser_node should read state["study_plan"] (in-memory) to generate code_text: str — into state. (Currently it doesn't — placeholder gap.)
-make_run_code_node's node (deterministic) is the one place a file is genuinely required as the handoff: it writes state["code_text"] to workspace/code.py because the sandbox container can only see the filesystem, then executes it and reads back stdout/stderr/exit_code/output_files into state.
+- **`analysis-sandbox`** — real, built from `./sandbox`
+  (`sandbox/Dockerfile`), tagged `metaproteomics-sandbox:latest` (must
+  match `IMAGE_NAME` in `sandbox/run_code.py`). Runs with `network_mode:
+  none` and only `sandbox/requirements.txt` (pandas/numpy/scipy/
+  matplotlib) — no LangGraph or agent dependencies. Mounts `./input` read-only
+  at `/input` and `./workspace` at `/workspace`. This is the container
+  `run_code_node` invokes to execute LLM-generated analysis scripts.
+- **`multiagent-system`** — not yet implemented; a placeholder image tag
+  gated behind the `not-yet-implemented` profile so `docker compose up`
+  never tries to build/start it. The pipeline itself (`python main.py`)
+  still runs on the host, since it needs outbound internet access to
+  reach the deNBI LLM endpoint that `inspect_data` and `study_planer`
+  call.

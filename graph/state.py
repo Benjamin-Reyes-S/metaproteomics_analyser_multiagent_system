@@ -1,14 +1,17 @@
 from operator import add
 from typing import Annotated, NotRequired, Required, TypedDict
 
+from schemas.schema_inspect_data import DatasetSummary
+from schemas.schema_study_planer import StudyPlan
+
 
 class MetaproteomicsAnalysisState(TypedDict, total=False):
     # Every CSV/TSV that belongs to the study (metadata, abundance, annotations).
     data_raw_paths: Required[list[str]]
-    dataset_summary: NotRequired[dict[str, str] | None]
+    dataset_summary: NotRequired[DatasetSummary | None]
 
     # Produced by the planner
-    study_plan: Required[str]
+    study_plan: Required[StudyPlan]
 
     # Produced by the auditor
     code_text: NotRequired[str | None]

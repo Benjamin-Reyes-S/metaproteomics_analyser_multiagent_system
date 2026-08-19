@@ -23,7 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from agents.inspect_data import inspect_data_node
 from agents.outcome_auditor import outcome_auditor_node
 from agents.statistical_analyser import statistical_analyser_node
-from agents.study_planer import study_planner_node
+from agents.study_planer import render_study_plan, study_planner_node
 from graph.state import MetaproteomicsAnalysisState
 from sandbox.run_code import run_code
 
@@ -41,7 +41,8 @@ def make_write_plan_node(workspace_dir: Path):
     def write_plan_node(state: MetaproteomicsAnalysisState) -> dict:
         study_plan = state.get("study_plan")
         issues = state.get("issues") or []
-        sections = ["METAPROTEOMICS STUDY PLAN", "", (study_plan or "No study plan produced.").strip()]
+        plan_text = render_study_plan(study_plan) if study_plan is not None else "No study plan produced."
+        sections = ["METAPROTEOMICS STUDY PLAN", "", plan_text.strip()]
         if issues:
             sections.extend(
                 ["", "ISSUES AND MISSING INFORMATION", ""] + [f"- {issue}" for issue in issues]
