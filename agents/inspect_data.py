@@ -44,8 +44,9 @@ class FileSummary(BaseModel):
         "and its likely role (metadata/abundance/taxonomy/function)."
     )
 
-
+# contract of tandarized output for the LLM call
 class DatasetInspectionOutput(BaseModel):
+    #nested strcture for each file, with a summary of its contents and role in the study
     file_summaries: list[FileSummary] = Field(
         description="One entry per input file, covering every file provided."
     )
@@ -58,7 +59,7 @@ class DatasetInspectionOutput(BaseModel):
         description="Blockers, missing information, or uncertainty the next agent must know about.",
     )
 
-
+#model call function
 def _summarizer_model():
     api_token = os.getenv("DENBI_TOKEN")
     if not api_token:
@@ -79,7 +80,7 @@ def _structural_profile(path: str) -> dict:
         "example_rows": sample.head(5).to_dict(orient="records"),
     }
 
-
+#node definition calling model by its function
 def inspect_data_node(state: MetaproteomicsAnalysisState) -> dict:
     issues: list[str] = []
     canonical: dict[str, dict] = {}

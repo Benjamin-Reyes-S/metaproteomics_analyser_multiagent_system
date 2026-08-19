@@ -4,11 +4,12 @@ This describes the current LangGraph backbone: how data moves through
 `MetaproteomicsAnalysisState`, which files land in `workspace/` and
 `results/`, and which nodes are real vs. placeholder.
 
-Every agent node in `agents/` (`inspect_data`, `study_planer`,
+Every agent node in `agents/` (`study_planer`,
 `statistical_analyser`, `outcome_auditor`) is currently a **deterministic
 placeholder with no LLM call**. Only the wiring, state contract, file
 artifacts, and sandbox execution are implemented for real. Each stub's
 docstring says exactly what to replace and what contract to preserve.
+`agents/inspect_data` already calls LLM.
 
 ## Graph
 
@@ -16,7 +17,7 @@ docstring says exactly what to replace and what contract to preserve.
 input/*.csv
      |
      v
-inspect_data            (agents/inspect_data.py — placeholder)
+inspect_data            (agents/inspect_data.py — agent)
      |
      | dataset_summary
      v
@@ -61,10 +62,7 @@ Defined in [graph/graph.py](graph/graph.py); run via [main.py](main.py).
 | `issues` | `inspect_data`, `study_planer` | `write_plan` (written into plan.txt), `main.py` (printed) | accumulates (`Annotated[..., add]`) |
 | `retry_count` | `outcome_auditor` | routing | incremented on each `FAIL`, capped at `MAX_RETRIES` in `graph/graph.py` |
 
-`code_text`/`code_path` are produced by `statistical_analyser`/`run_code`,
-not "the auditor" as an old comment in `state.py` said; that comment was
-left as-is to keep the diff minimal, but treat this table as the source
-of truth.
+`code_text`/`code_path` are produced by `statistical_analyser`/`run_code`
 
 ## Isolation of LLM-generated code
 
@@ -140,16 +138,21 @@ and a working `docker` CLI on `PATH`.
 ### notes
 Two corrections to your mental model:
 
-1. statistical_analyser doesn't read plan.txt — and even in the real version, it shouldn't read the file. Right now (line 26 above) it doesn't touch study_plan at all — as a placeholder it only reads state["data_raw_paths"] and ignores the plan entirely, which its docstring flags as the gap to fill in later.
+1. statistical_analyser doesn't read plan.txt — and even in the real version, it shouldn't read the file. Right now (line 26 above) it doesn't touch study_plan at all — as a placeholder it only reads state["data_raw_paths"] and ignores the plan entirely. When it is implemented for real, it should read state["study_plan"] — the string still sitting in the in-memory state dict — not re-open workspace/plan.txt from disk.LangGraph already carries it forward in memory as part of the state object flowing node-to-node. The file on disk is a side effect for a human to read (and later for store_results to archive into results/) — it's not the inter-node data channel.
 
-When it is implemented for real, it should read state["study_plan"] — the string still sitting in the in-memory state dict — not re-open workspace/plan.txt from disk. write_plan_node writing that file isn't how the plan gets to statistical_analyser; LangGraph already carries it forward in memory as part of the state object flowing node-to-node. The file on disk is a side effect for a human to read (and later for store_results to archive into results/) — it's not the inter-node data channel.
-
-2. So the general rule in this backbone: state (in-memory dict) is how nodes talk to each other; files are written by the deterministic nodes only where an artifact needs to persist — because a human wants to read it, or because something outside this Python process needs it (the sandbox container can only see /workspace, it can't see the orchestrator's Python variables, so code.py genuinely must be a file). plan.txt doesn't have that second requirement — nothing outside the process reads it during the run — so writing it is purely for persistence/audit, not data transfer.
+2. So the general rule in this backbone: state (in-memory dict) is how nodes talk to each other; files are written by the deterministic nodes only where an artifact needs to persist because a human wants to read it, or because something outside this Python process needs it (the sandbox container can only see /workspace, it can't see the orchestrator's Python variables, so code.py genuinely must be a file). plan.txt doesn't have that second requirement — nothing outside the process reads it during the run — so writing it is purely for persistence/audit, not data transfer.
 
 Corrected version of your summary:
 
 inspect_data returns dataset_summary: dict[str, str] — into state, in-memory.
-study_planner_node reasons over state["dataset_summary"] (in-memory, not a file) → returns study_plan: str — into state.
+study_planner_node reasons over state["dataset_summary"] (in-memory, not a file) → returns 
+
+
+
+
+
+
+: str — into state.
 write_plan_node (deterministic) persists state["study_plan"] to workspace/plan.txt — for humans/results/, not for the next node.
 statistical_analyser_node should read state["study_plan"] (in-memory) to generate code_text: str — into state. (Currently it doesn't — placeholder gap.)
 make_run_code_node's node (deterministic) is the one place a file is genuinely required as the handoff: it writes state["code_text"] to workspace/code.py because the sandbox container can only see the filesystem, then executes it and reads back stdout/stderr/exit_code/output_files into state.
