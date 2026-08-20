@@ -21,9 +21,10 @@ from pathlib import Path
 from langgraph.graph import END, START, StateGraph
 
 from agents.inspect_data import inspect_data_node
-from agents.outcome_auditor import outcome_auditor_node
-from agents.statistical_analyser import statistical_analyser_node
+#from agents.outcome_auditor import outcome_auditor_node
+#from agents.statistical_analyser import statistical_analyser_node
 from agents.study_planer import render_study_plan, study_planner_node
+from graph.save_outputs import make_save_dataset_summary_node, make_save_study_plan_node
 from graph.state import MetaproteomicsAnalysisState
 from sandbox.run_code import run_code
 
@@ -109,23 +110,32 @@ def build_graph(workspace_dir: Path, input_dir: Path, results_dir: Path):
     """Build the full pipeline graph, bound to concrete directories."""
     builder = StateGraph(MetaproteomicsAnalysisState)
     builder.add_node("inspect_data", inspect_data_node)
+    builder.add_node("save_dataset_summary", make_save_dataset_summary_node(workspace_dir))
     builder.add_node("study_planer", study_planner_node)
-    builder.add_node("write_plan", make_write_plan_node(workspace_dir))
-    builder.add_node("statistical_analyser", statistical_analyser_node)
-    builder.add_node("run_code", make_run_code_node(workspace_dir, input_dir))
-    builder.add_node("outcome_auditor", outcome_auditor_node)
-    builder.add_node("store_results", make_store_results_node(workspace_dir, results_dir))
+    builder.add_node("save_study_plan", make_save_study_plan_node(workspace_dir))
+    # TEMP (2-agent test run): downstream nodes commented out, not deleted.
+    # builder.add_node("write_plan", make_write_plan_node(workspace_dir))
+    # builder.add_node("statistical_analyser", statistical_analyser_node)
+    # builder.add_node("run_code", make_run_code_node(workspace_dir, input_dir))
+    # builder.add_node("outcome_auditor", outcome_auditor_node)
+    # builder.add_node("store_results", make_store_results_node(workspace_dir, results_dir))
 
     builder.add_edge(START, "inspect_data")
-    builder.add_edge("inspect_data", "study_planer")
-    builder.add_edge("study_planer", "write_plan")
-    builder.add_edge("write_plan", "statistical_analyser")
-    builder.add_edge("statistical_analyser", "run_code")
-    builder.add_edge("run_code", "outcome_auditor")
-    builder.add_conditional_edges(
-        "outcome_auditor",
-        route_after_audit,
-        {"statistical_analyser": "statistical_analyser", "store_results": "store_results", END: END},
-    )
-    builder.add_edge("store_results", END)
+    builder.add_edge("inspect_data", "save_dataset_summary")
+    builder.add_edge("save_dataset_summary", "study_planer")
+    builder.add_edge("study_planer", "save_study_plan")
+    # TEMP (2-agent test run): downstream edges commented out, not deleted.
+    # builder.add_edge("study_planer", "write_plan")
+    # builder.add_edge("write_plan", "statistical_analyser")
+    # builder.add_edge("statistical_analyser", "run_code")
+    # builder.add_edge("run_code", "outcome_auditor")
+    # builder.add_conditional_edges(
+    #     "outcome_auditor",
+    #     route_after_audit,
+    #     {"statistical_analyser": "statistical_analyser", "store_results": "store_results", END: END},
+    # )
+    # builder.add_edge("store_results", END)
+    # TEMP (2-agent test run): new edge short-circuiting straight to END
+    # right after save_study_plan, since everything past it is commented out above.
+    builder.add_edge("save_study_plan", END)
     return builder.compile()

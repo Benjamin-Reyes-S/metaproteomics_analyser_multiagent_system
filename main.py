@@ -109,15 +109,23 @@ def main() -> int:
     print(f"Datasets inspected: {len(datasets)}")
     for dataset in datasets:
         print(f"  - {dataset}")
-    print(f"Evaluation: {final_state.get('evaluation')}")
-    print(f"Execution exit code: {final_state.get('execution_exit_code')}")
-    if final_state.get("evaluation") == "PASS":
-        print(f"Results stored in: {results}")
-    else:
-        print(
-            f"Pipeline did not pass audit after {final_state.get('retry_count', 0)} retry(ies). "
-            f"See {workspace} for details."
-        )
+    # TEMP (2-agent test run): the graph currently stops right after
+    # study_planer (see graph/graph.py), so evaluation/execution state below
+    # is never produced. Commented out, not deleted, for when the full
+    # pipeline is wired back in.
+    # print(f"Evaluation: {final_state.get('evaluation')}")
+    # print(f"Execution exit code: {final_state.get('execution_exit_code')}")
+    # if final_state.get("evaluation") == "PASS":
+    #     print(f"Results stored in: {results}")
+    # else:
+    #     print(
+    #         f"Pipeline did not pass audit after {final_state.get('retry_count', 0)} retry(ies). "
+    #         f"See {workspace} for details."
+    #     )
+    # TEMP (2-agent test run): report the two agents' actual outputs instead.
+    print(f"Dataset summary: {final_state.get('dataset_summary')}")
+    print(f"Study plan: {final_state.get('study_plan')}")
+    print(f"Issues: {final_state.get('issues')}")
     return 0
 
 

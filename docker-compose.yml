@@ -1,12 +1,27 @@
 services:
 
-  # Runs the LangGraph pipeline (`python main.py`); needs internet access
-  # once the agents in agents/ call a real LLM endpoint. Not containerized
-  # yet -- run it on the host for now. Kept inert (no default profile) so
-  # `docker compose up` does not try to build/start it.
+  # Runs the LangGraph pipeline (`python main.py`). Needs outbound internet
+  # access to reach the deNBI LLM endpoint (inspect_data, study_planer) and
+  # the host's Docker socket to launch analysis-sandbox via `docker run`
+  # (run_code.py) -- this container has no Docker daemon of its own
+  # (Docker-outside-of-Docker). The repo is bind-mounted at the same
+  # absolute path inside and outside the container so the host/workspace
+  # paths run_code.py passes to that `docker run` command resolve
+  # correctly against the host daemon.
   multiagent-system:
-    image: metaproteomics-multiagent:not-yet-implemented
-    profiles: ["not-yet-implemented"]
+    build:
+      context: . # repo root: needs requirements.txt, agents/, graph/, schemas/, main.py
+      dockerfile: docker/Dockerfile
+    image: metaproteomics-multiagent:latest
+    mem_limit: 25g # cap this service at 25GB RAM
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}:${PWD}
+    working_dir: ${PWD}
+    environment:
+      - DENBI_TOKEN
+      - DENBI_MODEL
+      - DENBI_API_BASE
 
   # Executes only the LLM-generated analysis script (workspace/code.py).
   # No internet access; dependencies are limited to sandbox/requirements.txt

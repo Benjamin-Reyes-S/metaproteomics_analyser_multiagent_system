@@ -71,7 +71,7 @@ def _summarizer_model():
     api_base_url = os.getenv("DENBI_API_BASE", DEFAULT_API_BASE_URL)
     return ChatOpenAI(
         model=model_name, base_url=api_base_url, api_key=api_token, temperature=0
-    ).with_structured_output(DatasetSummary, method="json_schema")
+    ).with_structured_output(DatasetSummary, method="function_calling")
 
 
 def _structural_profile(path: str) -> dict:
