@@ -107,7 +107,7 @@ def _planner_model():
     api_base_url = os.getenv("DENBI_API_BASE", DEFAULT_API_BASE_URL)
     return ChatOpenAI(
         model=model_name, base_url=api_base_url, api_key=api_token, temperature=0
-    ).with_structured_output(StudyPlan, method="json_schema")
+    ).with_structured_output(StudyPlan, method="function_calling")
 
 
 def render_study_plan(plan: StudyPlan) -> str:
