@@ -1,33 +1,54 @@
 {
-  "study_design_case": "complex_multifactorial",
+  "study_design_case": "condition_comparison",
   "matrices": [
     {
       "path": "/home/benjamin.reyes/metaproteomics_analyser_multiagent_system/input/SupplementaryFile1.csv",
       "level": "unknown",
-      "domain": "unknown",
+      "domain": "host",
       "n_features": null,
       "n_samples": null,
       "missingness_pct": null,
-      "notes": "Sample metadata table (transposed: columns are samples, rows are annotations). Contains columns: condition (diseased/control), disease (CD/UC/normal), study (Henry/Lehmann/Lloyd-Price/Thuy-Boun/Wolf_2021/Wolf_2024_*), UseCase (BiomarkerDiscovery/BiomarkerValidation). Joins to feature matrices via sample ID columns."
+      "notes": "Sample metadata table. First 4 rows describe column semantics (condition, disease, study, UseCase). Columns 1+ are sample IDs. Joins to abundance matrix via SampleID."
+    },
+    {
+      "path": "/home/benjamin.reyes/metaproteomics_analyser_multiagent_system/input/SupplementaryFile3_1.csv",
+      "level": "unknown",
+      "domain": "mixed",
+      "n_features": null,
+      "n_samples": null,
+      "missingness_pct": null,
+      "notes": "Protein/peptide annotation database. Contains taxonomic (kingdom to species) and functional (main role, subrole, OG, description, CAZyDB) fields. Joins to abundance matrix via GroupID/Proteins."
+    },
+    {
+      "path": "/home/benjamin.reyes/metaproteomics_analyser_multiagent_system/input/all_groups_abundance.csv",
+      "level": "protein_intensity",
+      "domain": "mixed",
+      "n_features": null,
+      "n_samples": null,
+      "missingness_pct": null,
+      "notes": "Quantification matrix. Rows are protein groups (GroupID, Proteins, Peptides). Columns are samples. Joins to metadata via sample columns, and to annotations via GroupID."
     }
   ],
   "annotation_philosophy": {
-    "type": "unknown",
-    "rationale": "Input file is metadata only; no peptide/protein annotation details provided."
+    "type": "protein_centric",
+    "rationale": "Abundance is reported at the protein group level (GroupID/Proteins), with peptides collapsed into groups prior to quantification and annotation."
   },
   "replicate_structure": {
-    "biological_replicates_per_group": {},
+    "biological_replicates_per_group": {
+      "control": 0,
+      "diseased": 0
+    },
     "technical_replicates": false,
     "technical_replicate_cv": null,
     "pooled_samples": false
   },
   "batch_info": {
-    "has_known_batches": false,
-    "batch_column": null,
+    "has_known_batches": true,
+    "batch_column": "study",
     "associated_with_pca_axes": null,
-    "confounded_with_biology": null,
-    "correction_recommended": null,
-    "rationale": "No explicit batch column found; 'study' may act as a batch/covariate but requires confirmation."
+    "confounded_with_biology": false,
+    "correction_recommended": true,
+    "rationale": "Multiple independent studies (Henry, Lehmann, Lloyd-Price, Thuy-Boun, Wolf_2021, etc.) were combined. Batch effects are expected and should be corrected."
   },
   "condition_info": {
     "condition_column": "condition",
@@ -35,7 +56,10 @@
       "diseased",
       "control"
     ],
-    "group_sizes": {},
+    "group_sizes": {
+      "control": 0,
+      "diseased": 0
+    },
     "paired": false,
     "subject_column": null
   },
@@ -48,16 +72,14 @@
   },
   "known_confounders": [
     "study",
-    "disease",
-    "use_case"
+    "UseCase"
   ],
   "missingness_policy": null,
   "open_questions": [
-    "The provided file is a sample metadata table, not a feature matrix. Please provide the actual intensity/abundance matrices (peptide or protein level).",
-    "Is 'study' intended to be treated as a technical batch to be corrected, or as a biological covariate/factor?",
-    "Are samples paired within studies or across conditions? No subject_id column is present to determine pairing.",
-    "How should 'disease' (CD, UC, normal) and 'condition' (diseased, control) be combined for analysis? Should CD and UC be grouped, or analyzed separately?",
-    "What is the exact number of samples per group/study? The column count is large and not explicitly stated.",
-    "Are there any missing values or imputation strategies planned for the feature matrices?"
+    "The 'study' column indicates multiple independent cohorts were merged; confirm if batch correction is desired and which method to use.",
+    "The 'condition' column distinguishes 'diseased' vs 'control', but 'disease' column specifies CD, UC, or normal. Clarify if analysis should be at the condition level or disease-specific level.",
+    "Missingness pattern in the abundance matrix is not provided; determine if missing values are MNAR (e.g., below detection limit) and propose an imputation strategy.",
+    "Verify if 'UseCase' (BiomarkerDiscovery vs BiomarkerValidation) represents a technical split or biological grouping that needs to be accounted for.",
+    "Confirm whether host proteins (e.g., Homo sapiens) should be filtered out or retained for the analysis."
   ]
 }

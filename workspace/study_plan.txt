@@ -1,61 +1,62 @@
-Study design case: complex_multifactorial
+Study design case: condition_comparison
 
-This study employs a complex multifactorial design combining multiple cohorts/studies with conditions (diseased vs. control) and disease subtypes (CD, UC). The analysis plan focuses on rigorous QC, prevalence-based filtering within groups, and a multivariate differential abundance model that accounts for known confounders (study, disease, use_case). Normalization and batch handling will be finalized upon receipt of the actual intensity/abundance matrices. The plan emphasizes transparent handling of missing data and avoids irreversible batch correction in favor of covariate modeling.
+This study compares metaproteomic profiles between diseased and control conditions across multiple independent cohorts. The analysis will focus on differential protein abundance while accounting for batch effects from the merging of independent studies. Given the protein-centric annotation philosophy, quantification is at the protein group level. The plan outlines QC, filtering, normalization, batch correction, and differential abundance modeling, with explicit handling of missing values and host/microbial separation.
 
 QC PLAN
 - host/microbial matrices separated: True
 - check: sample IDs match metadata
 - check: total intensity per sample
 - check: missingness % per sample
-- check: PCA by condition/study
+- check: PCA by condition/batch/study
 - check: RLE plots
-- check: technical-replicate CV (if applicable)
+- check: technical-replicate CV (if any)
 - check: per-taxon/function coverage
 - flag: technical-replicate CV > 0.2 within a condition/batch
 - flag: high keratin/contaminant fraction
-- flag: missingness > 50% in any group
-- flag: total intensity outliers
+- flag: samples with missingness > 50%
+- flag: outliers in PCA driven by batch rather than condition
 
 FILTERING PLAN
 - remove contaminants/decoys: True
-- minimum unique peptides: None
-- prevalence cutoff: None% (within_group)
+- minimum unique peptides: 1
+- prevalence cutoff: 20.0% (within_group)
 - filter host/microbial separately: True
-- rationale: Filter host and microbial matrices separately to preserve biological signal. Prevalence filtering should be applied within experimental groups (e.g., diseased vs control) rather than across the entire dataset to avoid removing condition-specific features. Contaminants and decoys must be removed prior to normalization.
+- rationale: Host and microbial proteins have distinct abundance distributions and biological roles; filtering separately prevents host proteins from dominating prevalence thresholds. Contaminants/decoys must be removed to avoid false positives. Prevalence filtering within groups ensures we retain proteins consistently detected in at least one condition, which is critical for differential abundance power.
 
 NORMALIZATION PLAN
-- intensity method: unknown
+- intensity method: vsn
 - compositional method: none
-- rationale: Normalization method depends on the actual feature matrix (peptide vs protein LFQ intensities). For continuous intensities, log2 transformation followed by median or quantile normalization is standard. Compositional methods (CLR, etc.) should not be applied to continuous LFQ intensities. Will be finalized once the feature matrix is provided.
+- rationale: Continuous LFQ intensities require variance-stabilizing normalization. VSN is robust to outliers and handles the heteroscedasticity common in mass spectrometry data. Compositional methods are inappropriate for continuous intensity matrices.
 
 BATCH ASSESSMENT AND CORRECTION
-- confounded with biology: None
+- confounded with biology: False
 - correction method: covariate_in_model
-- rationale: 'study' acts as a major potential batch/covariate. It should be evaluated for association with PCA axes and missingness before correction. Modeling 'study' as a covariate in the differential abundance model is preferred over irreversible batch correction to preserve biological variance and avoid overcorrection. Never correct a batch fully confounded with biology.
+- rationale: Batch effects from merged studies are expected and not confounded with condition. Modeling batch as a covariate in the differential abundance model is preferred over irreversible matrix transformation to preserve biological variance and allow flexible adjustment for multiple known confounders (study, UseCase).
 - validation: PCA before/after correction
 - validation: variance explained by batch vs biology
 - validation: technical-replicate CVs
+- validation: check that condition effect is not attenuated
 
 DIFFERENTIAL ABUNDANCE PLAN
 - applicable: True
-- model type: linear_model
-- model formula: abundance ~ condition + disease + study + use_case
+- model type: limma_moderated
+- model formula: abundance ~ condition + study + UseCase
 - paired: False
-- missing-value policy: No blind minimum-value imputation. Features with missingness >50% within any group will be filtered. Remaining missing values will be handled via left-censored imputation (e.g., sample-specific minimum) or excluded from model fitting, depending on downstream sensitivity analysis.
-- rationale: Complex multifactorial design requires a model that accounts for multiple covariates (condition, disease type, study cohort, use_case). The formula will be adjusted once sample sizes and grouping strategies are confirmed. Missing value policy must address abundance-dependent missingness common in metaproteomics.
+- missing-value policy: Filter proteins with prevalence < 20% in at least one group before imputation. For remaining missing values, use left-censored imputation (e.g., narrow normal distribution below observed minimum) rather than global minimum, as missingness is likely abundance-dependent (MNAR).
+- rationale: Limma's empirical Bayes moderation improves power and stability for proteomics data with limited replicates. The formula accounts for the primary condition of interest while adjusting for known batch (study) and potential technical grouping (UseCase). Explicit MNAR-aware imputation prevents bias from abundance-dependent missingness.
 - must report: log2 fold change
 - must report: 95% CIs
 - must report: raw and FDR-adjusted p-values
 - must report: number of observations supporting each protein/function
 
 VISUALIZATION PLAN
-- protein level: PCA
-- protein level: heatmap
-- protein level: volcano plot
-- taxonomic level: bar plot
-- taxonomic level: PCA
-- functional level: bar plot
-- functional level: enrichment plot
+- protein level: volcano plots
+- protein level: heatmaps of top DA proteins
+- protein level: PCA/t-SNE colored by condition and batch
+- taxonomic level: bar plots of relative abundance by kingdom/phylum
+- taxonomic level: taxonomic composition heatmaps
+- functional level: bar plots of main role/subrole abundance
+- functional level: functional enrichment dot plots
 
 ANNOTATION PHILOSOPHY IMPACT
-Unknown; requires feature matrix to determine peptide- vs. protein-centric annotation. This choice will dictate taxonomic resolution and whether functional profiles are aggregated at the protein level.
+Protein-centric annotation means peptides are collapsed prior to quantification, improving protein identification confidence but potentially masking isoform-specific or strain-level variation. Taxonomic resolution will be limited to the protein group level (often genus or species), and functional annotations will reflect protein-level roles rather than peptide-specific pathways. This is appropriate for condition-level DA but may require downstream peptide-level validation for fine-scale resolution.

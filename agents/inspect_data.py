@@ -75,12 +75,20 @@ def _summarizer_model():
 
 
 def _structural_profile(path: str) -> dict:
-    sample = pd.read_csv(path, nrows=1000)
+    # sep=None + engine="python" sniffs the delimiter per file (comma, semicolon,
+    # tab, ...) instead of assuming comma; a hardcoded comma silently collapses
+    # semicolon-delimited files into one giant column and throws on ragged
+    # tab-delimited ones.
+    sample = pd.read_csv(path, sep=None, engine="python", nrows=1000)
+    # dtypes/example_rows are positional (aligned with "columns" by index), not
+    # keyed by column name: a record-per-row dict repeats every column name once
+    # per example row, which blows up the LLM prompt for wide tables (hundreds of
+    # columns x several rows x long column-name strings).
     return {
         "columns": list(sample.columns),
-        "dtypes": {col: str(dtype) for col, dtype in sample.dtypes.items()},
+        "dtypes": [str(dtype) for dtype in sample.dtypes],
         "sampled_rows": len(sample),
-        "example_rows": sample.head(5).to_dict(orient="records"),
+        "example_rows": sample.head(5).values.tolist(),
     }
 
 
@@ -117,7 +125,10 @@ def inspect_data_node(state: MetaproteomicsAnalysisState) -> dict:
 
     message = (
         "Build a DatasetSummary for the study described by these files. Account "
-        "for every file and preserve uncertainty:\n\n" + json.dumps(canonical, indent=2, default=str)
+        "for every file and preserve uncertainty. In each file's profile, "
+        "\"dtypes\" and \"example_rows\" are positional: dtypes[i] and every "
+        "example_rows[row][i] correspond to columns[i].\n\n"
+        + json.dumps(canonical, separators=(",", ":"), default=str)
     )
 
     try:
