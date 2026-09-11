@@ -9,8 +9,8 @@ full graph, state contract, and file layout.
 ## Repo layout
 
 ```
-agents/     inspect_data, study_planer (real LLM calls); statistical_analyser,
-            outcome_auditor (placeholders, no LLM call yet)
+agents/     inspect_data, study_planer, statistical_analyser (real LLM calls);
+            outcome_auditor (placeholder, no LLM call yet)
 graph/      graph.py (LangGraph wiring), state.py (shared state), save_outputs.py
             (writes agent outputs to workspace/ for inspection)
 schemas/    Pydantic schemas (DatasetSummary, StudyPlan) the two real agents
@@ -51,10 +51,11 @@ Either way, a working `docker` CLI is required on `PATH`/the container
 
 ## LLM credentials
 
-`inspect_data` and `study_planer` call an OpenAI-compatible endpoint
-(defaults to the deNBI-hosted vLLM gateway) and need `DENBI_TOKEN` set;
-`DENBI_MODEL` and `DENBI_API_BASE` are optional overrides. Without a
-token, or if the call fails, both agents fall back to a minimal
+`inspect_data`, `study_planer`, and `statistical_analyser` call an
+OpenAI-compatible endpoint (defaults to the deNBI-hosted vLLM gateway) and
+need `DENBI_TOKEN` set; `DENBI_MODEL` and `DENBI_API_BASE` are optional
+overrides. Without a token, if the call fails, or if the model returns no
+usable structured output, all three agents fall back to a minimal
 structural-only result instead of erroring out.
 
 Pass credentials inline on the command itself rather than `export`-ing
@@ -91,20 +92,24 @@ docker compose run --rm multiagent-system --dataset input/SupplementaryFile1.csv
 
 ### Current graph wiring
 
-`graph/graph.py` is currently wired for a 2-agent test run:
+`graph/graph.py` is currently wired through code generation and sandbox
+execution:
 
 ```
-inspect_data -> save_dataset_summary -> study_planer -> save_study_plan -> END
+inspect_data -> save_dataset_summary -> study_planer -> save_study_plan
+  -> statistical_analyser -> save_analysis_script -> run_code -> END
 ```
 
-`save_dataset_summary`/`save_study_plan` (`graph/save_outputs.py`) write
-the two agents' structured outputs to `workspace/dataset_summary.json`
-and `workspace/study_plan.txt` so they can be inspected directly. The
-rest of the full pipeline — `write_plan`, `statistical_analyser`,
-`run_code`, `outcome_auditor`, `store_results`, and the PASS/FAIL retry
+`save_dataset_summary`/`save_study_plan`/`save_analysis_script`
+(`graph/save_outputs.py`) write each agent's structured output to
+`workspace/dataset_summary.json`, `workspace/study_plan.txt`, and
+`workspace/analysis_script_plan.json` + `workspace/code.py` so they can be
+inspected directly; `run_code` then executes `code.py` in the sandbox and
+leaves its results in `workspace/` too. The rest of the full pipeline —
+`write_plan`, `outcome_auditor`, `store_results`, and the PASS/FAIL retry
 loop — is implemented but commented out in `graph/graph.py`/`main.py`
-pending `statistical_analyser`/`outcome_auditor` becoming real agents.
-See [PIPELINE.md](PIPELINE.md) for that full design.
+pending `outcome_auditor` becoming a real agent. See
+[PIPELINE.md](PIPELINE.md) for that full design.
 
 ## Docker Compose services
 
