@@ -1,8 +1,4 @@
 
-
-
-
-
 # Pipeline backbone
 
 LangGraph pipeline wiring agents (LLM calls) and deterministic nodes
@@ -113,9 +109,4 @@ into `results/` only on a PASS audit.
   matplotlib) — no LangGraph or agent dependencies. Mounts `./input` read-only
   at `/input` and `./workspace` at `/workspace`. This is the container
   `run_code_node` invokes to execute LLM-generated analysis scripts.
-- **`multiagent-system`** — not yet implemented; a placeholder image tag
-  gated behind the `not-yet-implemented` profile so `docker compose up`
-  never tries to build/start it. The pipeline itself (`python main.py`)
-  still runs on the host, since it needs outbound internet access to
-  reach the deNBI LLM endpoint that `inspect_data` and `study_planer`
-  call.
+- **`multiagent-system`** 

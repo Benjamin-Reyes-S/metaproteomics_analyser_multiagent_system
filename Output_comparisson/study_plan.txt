@@ -1,0 +1,49 @@
+Study design case: condition_comparison
+
+A large-scale (960 samples) condition-comparison study of diseased vs control metaproteomes across 4 studies. The plan focuses on controlling for batch effects via linear modeling and ensuring robust protein identification through prevalence filtering within groups.
+
+QC PLAN
+- host/microbial matrices separated: True
+- check: PCA to evaluate clustering by 'study' (batch) and 'condition'.
+- check: Distribution analysis of intensities before and after median normalization.
+- check: Missingness heatmap to determine if missing values are random or abundance-dependent.
+- flag: The replicate_structure reports 1 control and 4 diseased samples per group, but the total sample size is 960. This suggests a massive imbalance or a misunderstanding of the 'per group' definition in the summary.
+
+FILTERING PLAN
+- remove contaminants/decoys: True
+- minimum unique peptides: 2
+- prevalence cutoff: 50.0% (within_group)
+- filter host/microbial separately: True
+- rationale: A minimum of 2 unique peptides is standard to avoid single-peptide protein assignments. Prevalence filtering is applied within groups (diseased vs control) to ensure that proteins characteristic of only one condition are not discarded as 'low prevalence' across the whole dataset.
+
+NORMALIZATION PLAN
+- intensity method: median
+- compositional method: none
+- rationale: The abundance matrix contains continuous protein intensities. Median normalization is proposed to account for differences in total protein load across the 960 samples. Compositional methods (like CLR) are not applicable to LFQ/intensity data.
+
+BATCH ASSESSMENT AND CORRECTION
+- confounded with biology: None
+- correction method: covariate_in_model
+- rationale: The dataset contains 4 distinct studies/batches. Given the large sample size (960), batch effects are highly likely. I propose modeling 'study' as a covariate in the differential abundance model rather than applying a global transformation, to avoid removing biological signals that may vary across studies.
+- validation: Verify that the number of samples in the abundance matrix (960) matches the number of entries in SupplementaryFile1.csv after joining.
+- validation: Check for high CV (>0.2) among any technical replicates if they are discovered during data cleaning, though none are currently reported.
+
+DIFFERENTIAL ABUNDANCE PLAN
+- applicable: True
+- model type: linear_model
+- model formula: abundance ~ condition + study
+- paired: False
+- missing-value policy: abundance_dependent_filtering
+- rationale: The study design is a condition comparison (diseased vs control). Since samples are unpaired and originate from multiple studies, a linear model with 'study' as a covariate is appropriate to control for batch effects while testing the effect of the 'condition'.
+- must report: Report the number of proteins filtered out due to prevalence requirements.
+- must report: Provide a breakdown of differential abundance results stratified by disease type (CD vs UC) if the data allows.
+
+VISUALIZATION PLAN
+- protein level: PCA plot colored by 'condition' and 'study'.
+- protein level: Boxplots of top differentially abundant proteins.
+- taxonomic level: Stacked bar charts of taxonomic composition per condition.
+- functional level: Volcano plot of diseased vs control protein abundance.
+- functional level: Heatmap of top differentially abundant proteins.
+
+ANNOTATION PHILOSOPHY IMPACT
+The protein-centric approach (collapsing peptides into GroupIDs) means that taxonomic and functional read-outs will be based on the aggregate abundance of the protein group. This simplifies the analysis but may mask strain-level variation if multiple species share highly conserved protein sequences within a single GroupID.

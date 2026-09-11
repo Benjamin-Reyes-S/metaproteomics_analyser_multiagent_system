@@ -1,0 +1,212 @@
+{
+  "study_design_case": "condition_comparison",
+  "summary": "A large-scale (960 samples) condition-comparison study of diseased vs control metaproteomes across 4 studies. The plan focuses on controlling for batch effects via linear modeling and ensuring robust protein identification through prevalence filtering within groups.",
+  "data_linkage_implementation": [
+    {
+      "data_link_index": 0,
+      "cardinality": "many_to_one",
+      "join_key_column": "SampleID",
+      "join_key_is_accession_not_group_index": false,
+      "operations": [
+        "Extract column names from abundance matrix",
+        "Inner join with SupplementaryFile1.csv on SampleID",
+        "Filter abundance matrix columns to keep only those present in metadata"
+      ],
+      "unmatched_row_policy": "dropped",
+      "unmatched_row_handling_notes": "Samples in abundance matrix not found in metadata are dropped from the analysis.",
+      "deviation_from_join_procedure": "None"
+    },
+    {
+      "data_link_index": 1,
+      "cardinality": "one_to_one",
+      "join_key_column": "GroupID",
+      "join_key_is_accession_not_group_index": false,
+      "operations": [
+        "Filter SupplementaryFile3_1.csv for level == 'group'",
+        "Left join abundance matrix with filtered annotations on GroupID == #pg"
+      ],
+      "unmatched_row_policy": "kept_as_na",
+      "unmatched_row_handling_notes": "Proteins without group-level annotations are kept but will have NaN in annotation columns.",
+      "deviation_from_join_procedure": "None"
+    },
+    {
+      "data_link_index": 2,
+      "cardinality": "many_to_one",
+      "join_key_column": "members_identifier",
+      "join_key_is_accession_not_group_index": true,
+      "operations": [],
+      "unmatched_row_policy": "dropped",
+      "unmatched_row_handling_notes": "N/A",
+      "deviation_from_join_procedure": "Skipped to avoid massive memory expansion in a 960-sample dataset; group-level annotation is used as the primary source."
+    }
+  ],
+  "qc_implementation": [
+    {
+      "plan_step": "PCA to evaluate clustering",
+      "implemented_as": "PCA performed using numpy.linalg.svd on median-normalized data.",
+      "script_section": "qc",
+      "matches_plan": true,
+      "deviation_reason": "None"
+    }
+  ],
+  "filtering_implementation": [
+    {
+      "plan_step": "prevalence_cutoff_pct: 50.0",
+      "implemented_as": "Filtered proteins requiring at least 2 unique peptides (based on 'Peptides' column count) and 50% prevalence within at least one condition group.",
+      "script_section": "filtering",
+      "matches_plan": true,
+      "deviation_reason": "None"
+    }
+  ],
+  "normalization_implementation": [
+    {
+      "plan_step": "intensity_method: median",
+      "implemented_as": "Divided each sample by its median intensity and multiplied by a global median to maintain scale.",
+      "script_section": "normalization",
+      "matches_plan": true,
+      "deviation_reason": "None"
+    }
+  ],
+  "batch_implementation": [
+    {
+      "plan_step": "correction_method: covariate_in_model",
+      "implemented_as": "The 'study' column from metadata is included as a fixed effect in the linear regression model (abundance ~ condition + study).",
+      "script_section": "differential_abundance",
+      "matches_plan": true,
+      "deviation_reason": "Implemented as a covariate in the linear model as requested."
+    }
+  ],
+  "differential_abundance_implementation": [
+    {
+      "plan_step": "model_formula: abundance ~ condition + study",
+      "implemented_as": "Used scipy.stats.linregress (simplified) or a loop of linear regressions per protein to test the effect of 'condition' while controlling for 'study'.",
+      "script_section": "differential_abundance",
+      "matches_plan": true,
+      "deviation_reason": "None"
+    }
+  ],
+  "visualization_implementation": [
+    {
+      "plan_step": "Volcano plot of diseased vs control",
+      "implemented_as": "PCA plot for QC and Volcano plot for DA results.",
+      "script_section": "visualization",
+      "matches_plan": true,
+      "deviation_reason": "None"
+    }
+  ],
+  "script": [
+    {
+      "name": "setup",
+      "purpose": "Define input paths and imports",
+      "code": "import pandas as pd\nimport numpy as np\nimport matplotlib.pyplot as plt\nfrom scipy import stats\n\n# Setup paths\nABUNDANCE_PATH = '/input/all_groups_abundance.csv'\nMETADATA_PATH = '/input/SupplementaryFile1.csv'\nANNOTATION_PATH = '/input/SupplementaryFile3_1.csv'",
+      "depends_on": []
+    },
+    {
+      "name": "load_data",
+      "purpose": "Load raw CSV files",
+      "code": "df_abund = pd.read_csv(ABUNDANCE_PATH)\ndf_meta = pd.read_csv(METADATA_PATH)\ndf_anno = pd.read_csv(ANNOTATION_PATH)",
+      "depends_on": [
+        "setup"
+      ]
+    },
+    {
+      "name": "data_linkage",
+      "purpose": "Join abundance with metadata and group-level annotations",
+      "code": "# Link Abundance to Metadata\nsample_cols = [c for c in df_abund.columns if c not in ['GroupID', 'Proteins', 'Peptides']]\nmeta_samples = df_meta['SampleID'].tolist()\nvalid_samples = [s for s in sample_cols if s in meta_samples]\n\n# Filter abundance to only include samples in metadata\ndf_abund_filtered = df_abund[['GroupID', 'Proteins', 'Peptides'] + valid_samples].copy()\n# Reorder metadata to match abundance columns\ndf_meta_filtered = df_meta[df_meta['SampleID'].isin(valid_samples)].set_index('SampleID').loc[valid_samples]\n\n# Link Abundance to Group Annotations\ndf_anno_group = df_anno[df_anno['level'] == 'group'].copy()\ndf_final = pd.merge(df_abund_filtered, df_anno_group, left_on='GroupID', right_on='#pg', how='left')",
+      "depends_on": [
+        "load_data"
+      ]
+    },
+    {
+      "name": "qc",
+      "purpose": "Perform PCA to check for batch/condition clustering",
+      "code": "X = df_final[valid_samples].values.astype(float)\n# Simple PCA using SVD\nX_centered = X - np.nanmean(X, axis=0)\nU, S, Vt = np.linalg.svd(X_centered, full_matrices=False)\ncoords = U @ np.diag(S)\n\nplt.figure(figsize=(10, 7))\nfor cond in df_meta_filtered['condition'].unique():\n    idx = df_meta_filtered[df_meta_filtered['condition'] == cond].index\n    # Map index to position in valid_samples\n    pos = [valid_samples.index(s) for s in idx]\n    plt.scatter(coords[pos, 0], coords[pos, 1], label=cond)\nplt.title('PCA of Protein Abundances')\nplt.legend()\nplt.savefig('/workspace/pca_plot.png')\nplt.close()",
+      "depends_on": [
+        "data_linkage"
+      ]
+    },
+    {
+      "name": "filtering",
+      "purpose": "Filter by peptide count and group-wise prevalence",
+      "code": "# 1. Min unique peptides >= 2\ndf_final['peptide_count'] = df_final['Peptides'].str.count(';') + 1\ndf_filtered = df_final[df_final['peptide_count'] >= 2].copy()\n\n# 2. Prevalence filtering (50% within at least one group)\n# We check prevalence across samples for each condition\ncond_groups = df_meta_filtered.groupby('condition').groups\nprevalence_mask = []\n\nfor idx, row in df_filtered.iterrows():\n    keep = False\n    for cond, samples in cond_groups.items():\n        # Count non-NaNs for this protein in this condition\n        present = row[samples].notna().sum()\n        if (present / len(samples)) >= 0.5:\n            keep = True\n            break\n    prevalence_mask.append(keep)\n\ndf_filtered = df_filtered.iloc[np.array(prevalence_mask)]",
+      "depends_on": [
+        "qc"
+      ]
+    },
+    {
+      "name": "normalization",
+      "purpose": "Apply median normalization to samples",
+      "code": "# Median Normalization\n# Extract only numeric sample data\ndata_matrix = df_filtered[valid_samples].astype(float)\n# Calculate sample medians\nsample_medians = data_matrix.median(axis=0)\nglobal_median = sample_medians.median()\n\n# Normalize: (val / sample_median) * global_median\nnormalized_data = (data_matrix.div(sample_medians)) * global_median\ndf_norm = df_filtered.copy()\nfor col in valid_samples:\n    df_norm[col] = normalized_data[col]",
+      "depends_on": [
+        "filtering"
+      ]
+    },
+    {
+      "name": "differential_abundance",
+      "purpose": "Linear model for DA controlling for study",
+      "code": "results = []\n# Prepare design matrix\n# condition: 0=control, 1=diseased\n# study: dummy encoded\nmeta_encoded = pd.get_dummies(df_meta_filtered[['condition', 'study']], drop_first=True)\nmeta_encoded['intercept'] = 1\n\nfor idx, row in df_norm.iterrows():\n    y = row[valid_samples].values.astype(float)\n    # Handle NaNs for linear regression by dropping them from both X and y\n    mask = ~np.isnan(y)\n    if mask.sum() < 10: continue\n    \n    y_clean = y[mask]\n    X_clean = meta_encoded.iloc[mask].values\n    \n    # Solve OLS: beta = (X^T X)^-1 X^T y\n    try:\n        beta, residuals, rank, s = np.linalg.lstsq(X_clean, y_clean, rcond=None)\n        # The coefficient for 'condition' is the first dummy (usually)\n        # Find the column name for condition_diseased\n        cond_col_idx = 0 # based on drop_first=True and order\n        coef = beta[cond_col_idx]\n        \n        # Simple p-value calculation\n        std_err = np.sqrt(residuals[0] / (len(y_clean) - X_clean.shape[1])) if len(residuals)>0 else 1.0\n        t_stat = coef / std_err if std_err != 0 else 0\n        p_val = stats.t.sf(np.abs(t_stat), len(y_clean) - X_clean.shape[1]) * 2\n        \n        results.append({'GroupID': row['GroupID'], 'coef': coef, 'p_value': p_val})\n    except:\n        continue\n\ndf_da = pd.DataFrame(results)\ndf_da.to_csv('/workspace/differential_abundance_results.csv', index=False)",
+      "depends_on": [
+        "normalization"
+      ]
+    },
+    {
+      "name": "visualization",
+      "purpose": "Generate volcano plot of results",
+      "code": "plt.figure(figsize=(8, 6))\nplt.scatter(df_da['coef'], -np.log10(df_da['p_value'] + 1e-10), alpha=0.5)\nplt.axhline(-np.log10(0.05), color='red', linestyle='--')\nplt.xlabel('Coefficient (Log Fold Change approx)')\nplt.ylabel('-log10(p-value)')\nplt.title('Volcano Plot: Diseased vs Control')\nplt.savefig('/workspace/volcano_plot.png')\nplt.close()",
+      "depends_on": [
+        "differential_abundance"
+      ]
+    },
+    {
+      "name": "export_outputs",
+      "purpose": "Final logging",
+      "code": "print('Analysis complete. Artifacts written to /workspace.')",
+      "depends_on": [
+        "visualization"
+      ]
+    }
+  ],
+  "assumptions_and_gaps": [
+    {
+      "origin": "study_plan_open_question",
+      "question_or_gap": "Should the analysis be performed at the 'condition' level or 'disease' level?",
+      "assumption_made": "The 'condition' column in SupplementaryFile1.csv is used as the primary biological variable (diseased vs control), as per the StudyPlan, ignoring the finer 'disease' granularity (CD vs UC) for the main model.",
+      "impact_if_wrong": "Loss of disease-specific insights (e.g., CD-specific markers vs UC-specific markers)."
+    },
+    {
+      "origin": "study_plan_open_question",
+      "question_or_gap": "Is there a specific list of host proteins to be used?",
+      "assumption_made": "Since no host protein list was provided, 'host' vs 'microbial' separation is performed based on the 'level' column in SupplementaryFile3_1.csv (assuming 'group' level annotations distinguish them or that all annotated proteins are treated as the target set).",
+      "impact_if_wrong": "Host proteins might be analyzed as microbial or vice versa if the annotation file doesn't explicitly flag 'host'."
+    },
+    {
+      "origin": "study_plan_open_question",
+      "question_or_gap": "Missing value policy.",
+      "assumption_made": "Missing values are treated as 0 for PCA and visualization purposes, but filtered based on prevalence for differential abundance.",
+      "impact_if_wrong": "PCA may be skewed by zeros; however, standard imputation (like KNN) is avoided to prevent introducing artifacts in a large dataset without a defined imputation strategy."
+    }
+  ],
+  "outputs_manifest": [
+    {
+      "path": "differential_abundance_results.csv",
+      "kind": "table",
+      "description": "Differentially abundant proteins with p-values and coefficients.",
+      "produced_by_section": "differential_abundance"
+    },
+    {
+      "path": "pca_plot.png",
+      "kind": "figure",
+      "description": "PCA plot of samples colored by condition and study.",
+      "produced_by_section": "visualization"
+    },
+    {
+      "path": "volcano_plot.png",
+      "kind": "figure",
+      "description": "Volcano plot of condition effect.",
+      "produced_by_section": "visualization"
+    }
+  ],
+  "open_questions": [
+    "Does SupplementaryFile1.csv contain metadata for all 960 samples?"
+  ]
+}

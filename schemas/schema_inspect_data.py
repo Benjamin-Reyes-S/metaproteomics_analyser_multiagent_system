@@ -75,7 +75,72 @@ class MissingnessPolicy(BaseModel):
     justification: str | None = None
 
 
-#class passed to the state 
+class StudySummary(BaseModel):
+    """Quick-glance study-planning facts, separate from the detailed
+    replicate/batch/condition/longitudinal breakdowns below so a human or
+    the planner doesn't have to reassemble them from those nested fields."""
+
+    narrative: str | None = None
+    n_samples_total: int | None = None
+    n_samples_with_full_metadata: int | None = None
+    cohorts_or_studies: list[str] = Field(default_factory=list)
+    n_batches: int | None = None
+
+
+class DataPointer(BaseModel):
+    """Points at where one specific kind of information lives inside one file."""
+
+    file_path: str
+    columns: list[str] = Field(default_factory=list)
+    information_type: Literal[
+        "sample_id",
+        "abundance_intensity",
+        "protein_group_id",
+        "protein_accession",
+        "peptide_sequence",
+        "taxonomic",
+        "functional",
+        "sample_metadata_covariate",
+        "other",
+    ]
+    row_filter: str | None = Field(
+        default=None,
+        description="Condition selecting which rows this pointer applies to, if the "
+        "file mixes row types under one schema, e.g. \"level == 'group'\" vs "
+        "\"level == 'member'\".",
+    )
+    notes: str | None = None
+
+
+class DataLink(BaseModel):
+    """One join a downstream agent (study_planer, statistical_analyser) must
+    perform to go from `source` to `target`, e.g. abundance intensity ->
+    taxonomic/functional annotation, or abundance sample columns -> sample
+    metadata. Protein-group-style IDs are frequently reassigned per export
+    and are NOT safe to join on directly across files even when two files
+    both look numerically indexed — prefer joining on the underlying
+    accession/identifier columns and say so in join_procedure."""
+
+    source: DataPointer
+    target: DataPointer
+    join_method: Literal[
+        "exact_string_match",
+        "explode_delimited_list_then_match",
+        "column_header_matches_row_value",
+        "unknown",
+    ] = "unknown"
+    cardinality: Literal["one_to_one", "many_to_one", "many_to_many", "unknown"] = "unknown"
+    join_procedure: list[str] = Field(
+        default_factory=list,
+        description="Ordered, concrete steps to perform the join when it is not a "
+        "single direct key match, e.g. ['explode source.columns on \";\"', "
+        "'match each exploded value against target.columns where "
+        "row_filter applies', 'read the annotation off the matched row'].",
+    )
+    rationale: str | None = None
+
+
+#class passed to the state
 class DatasetSummary(BaseModel):
     # "unknown" covers both the structural-only fallback and a genuine
     # LLM "the files don't say" verdict — either way open_questions must
@@ -88,6 +153,7 @@ class DatasetSummary(BaseModel):
         "unknown",
     ] = "unknown"
     matrices: list[MatrixInfo] = Field(default_factory=list)
+    study_summary: StudySummary = Field(default_factory=StudySummary)
     annotation_philosophy: AnnotationPhilosophy = Field(default_factory=AnnotationPhilosophy)
     replicate_structure: ReplicateStructure = Field(default_factory=ReplicateStructure)
     batch_info: BatchInfo = Field(default_factory=BatchInfo)
@@ -95,4 +161,8 @@ class DatasetSummary(BaseModel):
     longitudinal_info: LongitudinalInfo | None = None  # None if case 1/2
     known_confounders: list[str] = Field(default_factory=list)
     missingness_policy: MissingnessPolicy | None = None
+    # The consensus join map for study_planer/statistical_analyser: where each
+    # kind of information (abundance, taxonomic, functional, sample metadata)
+    # physically lives and how to join across files to assemble it.
+    data_linkage: list[DataLink] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)  # things planner must resolve

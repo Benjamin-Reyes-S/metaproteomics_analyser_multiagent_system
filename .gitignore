@@ -1,18 +1,9 @@
-input/
 data/
 
 workspace/
 
+.env
 
-
-
-
-
-
-
-
-
-
-# Large local datasets
-input/SupplementaryFile3_1.csv
-input/all_groups_abundance.csv
+# Large local datasets: input/ itself stays tracked (e.g. input/data_structure_summary.md),
+# only the CSV study files inside it are excluded from commits.
+input/*.csv

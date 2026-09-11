@@ -90,12 +90,29 @@ Apply these cross-cutting rules regardless of case:
 
 Ground every field in DatasetSummary: use its matrices to decide which
 levels (protein/peptide intensity, taxonomic, functional) need QC/
-filtering/normalization plans, its batch_info/condition_info/
-longitudinal_info/replicate_structure/missingness_policy to decide
-batch_plan/differential_abundance_plan, and its known_confounders and
-open_questions to seed your own open_questions. Put every remaining
-blocker or ambiguity the study_planer could not resolve into
-open_questions.
+filtering/normalization plans, its study_summary for cohort/sample/
+batch scale, its batch_info/condition_info/longitudinal_info/
+replicate_structure/missingness_policy to decide batch_plan/
+differential_abundance_plan, and its known_confounders and
+open_questions to seed your own open_questions.
+
+Treat dataset_summary.data_linkage as the authoritative join map — it
+is what statistical_analyser will use to know exactly which file/column
+holds abundance vs. taxonomic vs. functional information and how to
+join them. Do not re-derive or contradict those joins yourself. If a
+level of information your plan depends on (e.g. a taxonomic or
+functional readout in visualization_plan) has no corresponding
+data_linkage entry, say so explicitly in open_questions rather than
+assuming a join exists.
+
+Put every remaining blocker or ambiguity the study_planer could not
+resolve into open_questions.
+
+filtering_plan.min_unique_peptides, filtering_plan.prevalence_cutoff_pct,
+and batch_plan.confounded_with_biology are plain number/true-false fields,
+not one of the enumerated "unknown"-option string fields elsewhere in this
+schema: if you don't know the value, set it to null, never the string
+"unknown".
 """.strip()
 
 
@@ -105,9 +122,13 @@ def _planner_model():
         raise RuntimeError("DENBI_TOKEN is not set")
     model_name = os.getenv("DENBI_MODEL", DEFAULT_MODEL_NAME)
     api_base_url = os.getenv("DENBI_API_BASE", DEFAULT_API_BASE_URL)
+    # json_schema constrains decoding directly via response_format instead of
+    # relying on the model choosing to invoke a tool call (function_calling);
+    # self-hosted/gateway-served models often support the former far more
+    # reliably than OpenAI-style forced tool-choice.
     return ChatOpenAI(
         model=model_name, base_url=api_base_url, api_key=api_token, temperature=0
-    ).with_structured_output(StudyPlan, method="function_calling")
+    ).with_structured_output(StudyPlan, method="json_schema")
 
 
 def render_study_plan(plan: StudyPlan) -> str:
@@ -176,7 +197,7 @@ def render_study_plan(plan: StudyPlan) -> str:
 
     return "\n".join(lines)
 
-
+#if the dataset_summary not available
 def _fallback_plan(dataset_summary, reason: str) -> StudyPlan:
     return StudyPlan(
         study_design_case=dataset_summary.study_design_case,
@@ -218,6 +239,18 @@ def study_planner_node(state: MetaproteomicsAnalysisState) -> dict:
         )
     except Exception as exc:
         reason = f"study_planer LLM call failed, using minimal fallback: {type(exc).__name__}: {exc}"
+        return {
+            "study_plan": _fallback_plan(dataset_summary, reason),
+            "issues": [reason],
+        }
+
+    if plan is None:
+        # with_structured_output can return None instead of raising when the
+        # model's response has no usable tool/function call.
+        reason = (
+            "study_planer LLM call returned no structured StudyPlan (the model "
+            "likely did not invoke the expected function call), using minimal fallback."
+        )
         return {
             "study_plan": _fallback_plan(dataset_summary, reason),
             "issues": [reason],

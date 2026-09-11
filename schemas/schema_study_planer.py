@@ -16,7 +16,18 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _blank_placeholder_to_none(value):
+    """Coerce a placeholder string (the LLM's catch-all "I don't know" answer
+    for the many Literal[..., "unknown"] fields elsewhere in this schema) to
+    None on fields that are plain int/float/bool and have no such literal
+    option -- otherwise a stray "unknown" here fails validation outright and
+    discards an otherwise-usable plan."""
+    if isinstance(value, str) and value.strip().lower() in {"unknown", "n/a", "na", "none", ""}:
+        return None
+    return value
 
 
 class QCPlan(BaseModel):
@@ -41,6 +52,11 @@ class FilteringPlan(BaseModel):
     prevalence_grouping: Literal["within_group", "across_dataset", "unknown"] = "within_group"
     filter_host_and_microbial_separately: bool = True
     rationale: str
+
+    @field_validator("min_unique_peptides", "prevalence_cutoff_pct", mode="before")
+    @classmethod
+    def _coerce_unknown(cls, value):
+        return _blank_placeholder_to_none(value)
 
 
 class NormalizationPlan(BaseModel):
@@ -80,6 +96,11 @@ class BatchPlan(BaseModel):
         "'PCA before/after', 'variance explained by batch vs biology', 'technical-replicate CVs'.",
     )
     rationale: str
+
+    @field_validator("confounded_with_biology", mode="before")
+    @classmethod
+    def _coerce_unknown(cls, value):
+        return _blank_placeholder_to_none(value)
 
 
 class DifferentialAbundancePlan(BaseModel):

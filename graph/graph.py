@@ -22,9 +22,13 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.inspect_data import inspect_data_node
 #from agents.outcome_auditor import outcome_auditor_node
-#from agents.statistical_analyser import statistical_analyser_node
+from agents.statistical_analyser import statistical_analyser_node
 from agents.study_planer import render_study_plan, study_planner_node
-from graph.save_outputs import make_save_dataset_summary_node, make_save_study_plan_node
+from graph.save_outputs import (
+    make_save_analysis_script_node,
+    make_save_dataset_summary_node,
+    make_save_study_plan_node,
+)
 from graph.state import MetaproteomicsAnalysisState
 from sandbox.run_code import run_code
 
@@ -113,10 +117,13 @@ def build_graph(workspace_dir: Path, input_dir: Path, results_dir: Path):
     builder.add_node("save_dataset_summary", make_save_dataset_summary_node(workspace_dir))
     builder.add_node("study_planer", study_planner_node)
     builder.add_node("save_study_plan", make_save_study_plan_node(workspace_dir))
-    # TEMP (2-agent test run): downstream nodes commented out, not deleted.
+    builder.add_node("statistical_analyser", statistical_analyser_node)
+    builder.add_node("save_analysis_script", make_save_analysis_script_node(workspace_dir))
+    builder.add_node("run_code", make_run_code_node(workspace_dir, input_dir))
+    # TEMP (4-agent test run): outcome_auditor is still a deterministic
+    # placeholder (see its docstring) and store_results/the retry loop only
+    # make sense once it's real, so they stay commented out, not deleted.
     # builder.add_node("write_plan", make_write_plan_node(workspace_dir))
-    # builder.add_node("statistical_analyser", statistical_analyser_node)
-    # builder.add_node("run_code", make_run_code_node(workspace_dir, input_dir))
     # builder.add_node("outcome_auditor", outcome_auditor_node)
     # builder.add_node("store_results", make_store_results_node(workspace_dir, results_dir))
 
@@ -124,10 +131,12 @@ def build_graph(workspace_dir: Path, input_dir: Path, results_dir: Path):
     builder.add_edge("inspect_data", "save_dataset_summary")
     builder.add_edge("save_dataset_summary", "study_planer")
     builder.add_edge("study_planer", "save_study_plan")
-    # TEMP (2-agent test run): downstream edges commented out, not deleted.
+    builder.add_edge("save_study_plan", "statistical_analyser")
+    builder.add_edge("statistical_analyser", "save_analysis_script")
+    builder.add_edge("save_analysis_script", "run_code")
+    # TEMP (4-agent test run): downstream edges commented out, not deleted.
     # builder.add_edge("study_planer", "write_plan")
     # builder.add_edge("write_plan", "statistical_analyser")
-    # builder.add_edge("statistical_analyser", "run_code")
     # builder.add_edge("run_code", "outcome_auditor")
     # builder.add_conditional_edges(
     #     "outcome_auditor",
@@ -135,7 +144,7 @@ def build_graph(workspace_dir: Path, input_dir: Path, results_dir: Path):
     #     {"statistical_analyser": "statistical_analyser", "store_results": "store_results", END: END},
     # )
     # builder.add_edge("store_results", END)
-    # TEMP (2-agent test run): new edge short-circuiting straight to END
-    # right after save_study_plan, since everything past it is commented out above.
-    builder.add_edge("save_study_plan", END)
+    # TEMP (4-agent test run): new edge short-circuiting straight to END right
+    # after run_code, since outcome_auditor/store_results stay commented out above.
+    builder.add_edge("run_code", END)
     return builder.compile()
