@@ -7,3 +7,4 @@ langgraph
 pandas
 pydantic
 langchain_core
+mcp 

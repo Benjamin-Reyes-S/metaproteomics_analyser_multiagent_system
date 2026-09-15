@@ -17,15 +17,31 @@ If no DENBI_TOKEN is configured, or the LLM call fails, this node falls
 back to a structural-only DatasetSummary (columns/dtypes/row count per
 file, everything semantic left "unknown") so the pipeline can still run
 without semantic annotation.
+
+Before profiling, each raw file is run through the mcp_server.mcp_data
+standardization tools (see DataStructuralProblems.md): a wrong delimiter
+is rewritten to "," and a small variables-as-rows metadata table is
+transposed into samples-as-rows. This is deterministic, not LLM-driven
+(same reasoning as sandbox/run_code.py's fixed command construction) --
+the file's own shape decides whether transposing applies, so there's no
+judgment call for a model to get wrong. The tools themselves move each
+original, untagged file into "<input_dir>/original_files/", which keeps
+it out of this node's (and any future run's) `data_raw_paths` scan --
+main.py lists input_dir non-recursively -- while leaving it on disk for
+the user to inspect if needed. Downstream nodes still only ever see
+`state["dataset_summary"]`; its MatrixInfo/DataLink entries reference the
+standardized paths, not the original ones.
 """
 
 import json
 import os
+from pathlib import Path
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 import pandas as pd
 
+from mcp_server.mcp_data import TAGS, standardize_separator, transpose_data_file
 from schemas.schema_inspect_data import DatasetSummary, MatrixInfo, StudySummary
 from graph.state import MetaproteomicsAnalysisState
 
@@ -171,6 +187,57 @@ def _render_column_groups(column_groups: list[dict]) -> str:
     return "; ".join(parts)
 
 
+def _is_standardized(path: str) -> bool:
+    return any(tag in Path(path).stem for tag in TAGS)
+
+
+def _looks_transposed(path: str) -> bool:
+    """A metaproteomics abundance/annotation matrix always has far more
+    rows (protein groups/peptides) than columns (samples plus a handful of
+    metadata columns); a small metadata table stored variables-as-rows,
+    samples-as-columns is the opposite shape (see DataStructuralProblems.md
+    for a concrete example: 5 rows x 607 columns). Comparing row count to
+    column count is enough to tell them apart. Counting stops as soon as
+    the row count reaches the column count, so this stays cheap even for
+    the largest files -- a real matrix's row count blows past its (small)
+    column count almost immediately."""
+    with open(path, newline="") as f:
+        n_columns = len(f.readline().split(","))
+        n_rows = 1
+        for _ in f:
+            n_rows += 1
+            if n_rows >= n_columns:
+                return False
+    return n_rows < n_columns
+
+
+def _standardize_raw_path(path: str) -> str:
+    """Fix delimiter/orientation problems on one raw input file before it's
+    profiled (see module docstring). Already-standardized files (tagged
+    "+Separator"/"+Transpose", e.g. from a previous run) are left alone."""
+    if _is_standardized(path):
+        return path
+
+    input_dir = str(Path(path).parent)
+    result = standardize_separator(Path(path).name, input_dir)
+    separator_fixed_path = result["output_path"]
+
+    if not _looks_transposed(separator_fixed_path):
+        return separator_fixed_path
+
+    result = transpose_data_file(Path(separator_fixed_path).name, input_dir)
+    final_path = result["output_path"]
+
+    if separator_fixed_path not in (path, final_path):
+        # standardize_separator produced an intermediate tagged file that
+        # transpose_data_file then consumed and superseded. It's fully
+        # reproducible from the archived original, so drop it rather than
+        # leaving a second, half-fixed copy for a future scan to trip over.
+        os.remove(separator_fixed_path)
+
+    return final_path
+
+
 def _structural_profile(path: str) -> dict:
     # sep=None + engine="python" sniffs the delimiter per file (comma, semicolon,
     # tab, ...) instead of assuming comma; a hardcoded comma silently collapses
@@ -245,7 +312,8 @@ def inspect_data_node(state: MetaproteomicsAnalysisState) -> dict:
 
     for path in state["data_raw_paths"]:
         try:
-            canonical[path] = _structural_profile(path)
+            standardized_path = _standardize_raw_path(path)
+            canonical[standardized_path] = _structural_profile(standardized_path)
         except Exception as exc:
             issues.append(f"inspect_data failed to read {path}: {type(exc).__name__}: {exc}")
 
