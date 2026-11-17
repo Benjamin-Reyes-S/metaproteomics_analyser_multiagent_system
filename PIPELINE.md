@@ -90,6 +90,11 @@ sandbox container) needs the data.
  store_results         --> output_files                     --> results/*  (file, on PASS only)  (not wired yet)
 ```
 
+`inspect_data` also has a file side effect not shown in the table above: it
+standardizes each raw input file's delimiter/orientation on disk before
+profiling it and reads the result rather than `data_raw_paths` untouched.
+See "Input standardization" below.
+
 `dataset_summary` (`schemas/schema_inspect_data.py: DatasetSummary`),
 `study_plan` (`schemas/schema_study_planer.py: StudyPlan`), and
 `analysis_script_plan` (`schemas/analysis_script_plan.py:
@@ -111,6 +116,66 @@ place that turns `analysis_script_plan.script` into an actual file
 (`workspace/code.py`) and populates `code_text`; `run_code_node`
 re-writes the same content and executes that file in a network-isolated
 container — no agent output ever reaches a command line directly.
+
+## Input standardization (mcp_server/mcp_data.py)
+
+Input files in this project show up with inconsistent delimiters (comma,
+tab, semicolon) and, for small metadata-style tables, a transposed layout
+(variables as rows, samples as columns) instead of the tidy
+one-row-per-sample layout the rest of the pipeline assumes — see
+[DataStructuralProblems.md](DataStructuralProblems.md) for the concrete
+cases that motivated this. `mcp_data.py` defines two `@mcp.tool()`-decorated
+functions, `standardize_separator` and `transpose_data_file`, that fix each
+problem independently: each writes a new, tagged file (e.g.
+`SupplementaryFile1+Separator+Transpose.csv`) next to the original and
+moves the original, untagged file into `<input_dir>/original_files/`.
+
+**These are called as plain Python functions, not through the MCP
+protocol.** `@mcp.tool()` registers them on a `FastMCP` server object, but
+nothing runs that server or connects to it via an MCP client — no agent can
+currently discover or invoke these tools itself. `inspect_data_node`
+(`agents/inspect_data.py`) imports `mcp_server.mcp_data` directly and calls
+`standardize_separator`/`transpose_data_file` deterministically, before
+profiling each file, for the same reason `sandbox/run_code.py` builds its
+`docker run` command deterministically: which delimiter a file uses is not
+a judgment call, so there's nothing for an LLM to decide there. Making an
+agent actually call these tools through MCP (via `langchain-mcp-adapters`,
+already in `requirements.txt` but currently unused) would need a separate
+tool-calling LLM turn before the existing `with_structured_output(...,
+method="json_schema")` call, since mixing forced-schema decoding with
+tool-calling in one turn is unreliable on the self-hosted model this
+project targets (see "Structured-output reliability" below).
+
+Whether a file needs transposing is decided by `_looks_transposed()`
+(`agents/inspect_data.py`): a pure row-count-vs-column-count comparison,
+with no semantic understanding of what the file actually is. It correctly
+handles this project's known files (a small metadata table has far fewer
+rows than columns; a real abundance/annotation matrix is the opposite), but
+it will misfire on any file that is legitimately wide yet already correctly
+oriented (e.g. a small study with 8 samples and 15 metadata columns) —
+silently transposing good data. `standardize_separator` carries no such
+risk; it's always safe to call (a no-op if the file is already
+comma-delimited).
+
+Standardized files and the `original_files/` archive both live inside
+`input_dir` itself. Since `main.py` lists `input_dir` non-recursively when
+building `data_raw_paths`, archived originals are automatically excluded
+from every subsequent run without any extra filtering logic — but this also
+means `data_raw_paths`, once set at graph-start, does not reflect files
+this same run standardizes: on the run that performs standardization, some
+paths in `state["data_raw_paths"]` stop existing on disk partway through
+(moved into `original_files/`) without the state being updated to match.
+The only consumer of `data_raw_paths` besides `inspect_data_node` is
+`statistical_analyser`'s fallback plan, which only uses it for an
+informational basename list, so this is harmless today — but
+`data_raw_paths` should not be relied on for real file access by anything
+added later; use `dataset_summary`'s `MatrixInfo.path` values instead,
+which always reflect the standardized files.
+
+**Known packaging gap:** `docker/Dockerfile` (the `multiagent-system`
+image) does not yet `COPY mcp_server/`, so `python main.py` inside that
+container currently fails with `ModuleNotFoundError: No module named
+'mcp_server'` until that line is added.
 
 ## Agents vs. placeholders
 
@@ -191,3 +256,5 @@ PASS audit.
   and what lets `multiagent-system` see `analysis-sandbox`'s output files
   afterward — both containers end up bind-mounting the same physical host
   directory. Needs outbound internet access to reach the LLM endpoint.
+  **Currently missing a `COPY mcp_server/` line** — see the packaging gap
+  noted under "Input standardization" above.

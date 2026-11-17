@@ -17,6 +17,7 @@ code.py lands where run_code's fixed sandbox command
 raw data the script itself is expected to read from.
 """
 
+import shutil
 from pathlib import Path
 
 from agents.statistical_analyser import render_analysis_script
@@ -65,3 +66,58 @@ def make_save_analysis_script_node(workspace_dir: Path):
         return {"code_text": code_text}
 
     return save_analysis_script_node
+
+
+# Files the pipeline itself writes into workspace/ (not produced by code.py),
+# so save_code_output leaves them where they are.
+PIPELINE_FILES = {
+    "code.py",
+    "plan.txt",
+    "dataset_summary.json",
+    "study_plan.txt",
+    "analysis_script_plan.json",
+}
+PLOT_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".pdf", ".tif", ".tiff", ".eps"}
+EXECUTION_LOG_NAME = "execution_log.txt"
+
+
+def save_code_output(subworkspace_dir: Path):
+    """Collect what code.py produced in the sandbox into workspace/output/.
+
+    subworkspace_dir is workspace/output. On every run it is emptied and
+    recreated, together with subworkspace_dir/plots/, so it only holds the
+    current run's results. Then:
+      - every file code.py left in workspace/ (state["output_files"], minus
+        PIPELINE_FILES) is moved there; images (PLOT_SUFFIXES) go into plots/;
+      - run_code's stdout, stderr and exit code are written to
+        execution_log.txt, so a failed or timed-out run is visible on disk.
+    Returns the new locations as output_files.
+    """
+
+    def save_code_output_node(state: MetaproteomicsAnalysisState) -> dict:
+        plots_dir = subworkspace_dir / "plots"
+        if subworkspace_dir.exists():
+            shutil.rmtree(subworkspace_dir)
+        plots_dir.mkdir(parents=True)
+
+        moved_files = []
+        for output_file in state.get("output_files") or []:
+            source = Path(output_file)
+            if not source.is_file() or source.name in PIPELINE_FILES:
+                continue
+            target_dir = plots_dir if source.suffix.casefold() in PLOT_SUFFIXES else subworkspace_dir
+            target = target_dir / source.name
+            shutil.move(str(source), str(target))
+            moved_files.append(str(target))
+
+        log_text = (
+            f"execution_status: {state.get('execution_status')}\n"
+            f"exit_code: {state.get('execution_exit_code')}\n"
+            f"\n===== stdout =====\n{state.get('execution_stdout') or ''}\n"
+            f"\n===== stderr =====\n{state.get('execution_stderr') or ''}\n"
+        )
+        (subworkspace_dir / EXECUTION_LOG_NAME).write_text(log_text, encoding="utf-8")
+
+        return {"output_files": sorted(moved_files)}
+
+    return save_code_output_node

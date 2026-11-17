@@ -1,13 +1,5 @@
 """LangGraph backbone wiring the metaproteomics pipeline together.
 
-    inspect_data -> study_planer -> write_plan -> statistical_analyser -> run_code -> outcome_auditor
-                                                        ^                                       |
-                                                        |______________ FAIL (retry) ___________|
-                                                                                                 |
-                                                                                             PASS |
-                                                                                                 v
-                                                                                          store_results -> END
-
 See PIPELINE.md for the full state contract and file layout. The nodes
 imported from agents/ are deterministic placeholders for now (see their
 docstrings); run_code_node and store_results_node below are the
@@ -28,6 +20,7 @@ from graph.save_outputs import (
     make_save_analysis_script_node,
     make_save_dataset_summary_node,
     make_save_study_plan_node,
+    save_code_output,
 )
 from graph.state import MetaproteomicsAnalysisState
 from sandbox.run_code import run_code
@@ -120,6 +113,7 @@ def build_graph(workspace_dir: Path, input_dir: Path, results_dir: Path):
     builder.add_node("statistical_analyser", statistical_analyser_node)
     builder.add_node("save_analysis_script", make_save_analysis_script_node(workspace_dir))
     builder.add_node("run_code", make_run_code_node(workspace_dir, input_dir))
+    builder.add_node("save_code_output", save_code_output(workspace_dir / "output"))
     # TEMP (4-agent test run): outcome_auditor is still a deterministic
     # placeholder (see its docstring) and store_results/the retry loop only
     # make sense once it's real, so they stay commented out, not deleted.
@@ -134,6 +128,7 @@ def build_graph(workspace_dir: Path, input_dir: Path, results_dir: Path):
     builder.add_edge("save_study_plan", "statistical_analyser")
     builder.add_edge("statistical_analyser", "save_analysis_script")
     builder.add_edge("save_analysis_script", "run_code")
+    builder.add_edge("run_code", "save_code_output")
     # TEMP (4-agent test run): downstream edges commented out, not deleted.
     # builder.add_edge("study_planer", "write_plan")
     # builder.add_edge("write_plan", "statistical_analyser")
@@ -145,6 +140,6 @@ def build_graph(workspace_dir: Path, input_dir: Path, results_dir: Path):
     # )
     # builder.add_edge("store_results", END)
     # TEMP (4-agent test run): new edge short-circuiting straight to END right
-    # after run_code, since outcome_auditor/store_results stay commented out above.
-    builder.add_edge("run_code", END)
+    # after save_code_output, since outcome_auditor/store_results stay commented out above.
+    builder.add_edge("save_code_output", END)
     return builder.compile()
